@@ -429,8 +429,8 @@ class Trainer3DGRUT:
                 extended_features_gt = gpu_batch.features_gt
                 pred_extended_features = outputs["pred_extended_features"]
                 n_extended_features = min(pred_extended_features.shape[-1], extended_features_gt.shape[-1])
-                pred_extended_features = pred_extended_features[..., -n_extended_features:]
-                extended_features_gt = extended_features_gt[..., -n_extended_features:]
+                pred_extended_features = pred_extended_features[..., :n_extended_features]
+                extended_features_gt = extended_features_gt[..., :n_extended_features]
                 if mask is not None:
                     extended_features_gt = extended_features_gt * mask
                     pred_extended_features = pred_extended_features * mask
@@ -677,6 +677,7 @@ class Trainer3DGRUT:
                 writer=self.tracking.writer,
                 global_step=self.global_step,
                 compute_extra_metrics=conf.compute_extra_metrics,
+                extended_features_metrics=conf.extended_features_metrics,
             )
             renderer.render_all()
 

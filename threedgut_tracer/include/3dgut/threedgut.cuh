@@ -18,21 +18,24 @@
 #include <threedgutSlang.cuh>
 
 struct model_InternalParams {
-    static constexpr int GlobalParametersValueBufferIndex = 0;
-    static constexpr int DensityRawParametersBufferIndex  = 1;
-    static constexpr int FeaturesRawParametersBufferIndex = 2;
+    static constexpr int GlobalParametersValueBufferIndex         = 0;
+    static constexpr int DensityRawParametersBufferIndex          = 1;
+    static constexpr int FeaturesRawParametersBufferIndex         = 2;
+    static constexpr int ExtendedFeaturesRawParametersBufferIndex = 3;
 
-    static constexpr int DensityRawParametersGradientBufferIndex  = 0;
-    static constexpr int FeaturesRawParametersGradientBufferIndex = 1;
+    static constexpr int DensityRawParametersGradientBufferIndex          = 0;
+    static constexpr int FeaturesRawParametersGradientBufferIndex         = 1;
+    static constexpr int ExtendedFeaturesRawParametersGradientBufferIndex = 2;
 
     static constexpr int FeatureShDegreeValueOffset = 4; // in bytes, offset in the global parameters buffer
 };
 
 struct model_ExternalParams {
     static constexpr int FeaturesDim                 = 3;
+    static const int ExtendedFeaturesDim             = EXTENDED_FEATURES_DIM;
     static constexpr float AlphaThreshold            = GAUSSIAN_PARTICLE_MIN_ALPHA;          // = 1.0/255.0
     static constexpr float MinTransmittanceThreshold = GAUSSIAN_MIN_TRANSMITTANCE_THRESHOLD; // = 0.0001
-    static constexpr int KernelDegree                = GAUSSIAN_PARTICLE_KERNEL_DEGREE;
+    static constexpr int KernelType                  = GAUSSIAN_PARTICLE_KERNEL_TYPE;
     static constexpr float MinParticleKernelDensity  = GAUSSIAN_PARTICLE_MIN_KERNEL_DENSITY;
     static const int RadianceMaxNumSphCoefficients   = PARTICLE_RADIANCE_NUM_COEFFS;
 };

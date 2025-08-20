@@ -1,0 +1,34 @@
+
+# @package _global_
+
+# order in which configs override each other (/* - denotes a relative search path)
+# @package _global_
+
+# order in which configs override each other (/* - denotes a relative search path)
+defaults:
+  - /base_mcmc
+  - /dataset: colmap
+  - /initialization: colmap
+  - /render: 3dgut
+  - _self_
+  - override /features/extractors: nv_radio
+  - override /features/compressors: pca
+
+dataset:
+  load_features: true
+
+model:
+  extended_features:
+    dim: 32
+    activation: sigmoid
+
+loss:
+  use_l1: false
+  use_l2: false
+  use_ssim: false
+
+# overwrite of default parameters
+val_frequency: 999999 # never validate
+
+initialization:
+  use_observation_points: false

@@ -1,6 +1,8 @@
 defaults:
   - _self_
   - /strategy: gs
+  - /features/extractors: skip
+  - /features/compressors: skip
   - override hydra/hydra_logging: disabled
   - override hydra/job_logging: disabled
 
@@ -53,14 +55,20 @@ export_usdz:
 model:
   density_activation: sigmoid
   scale_activation: exp
+  kernel_parameters_activation: exp
   default_density: 0.1
   default_scale_factor: 1.0
   optimize_density: true
+  extended_features:
+    dim: 0
+    activation: none
   optimize_features_albedo: true
+  optimize_extended_features: true
   optimize_features_specular: true
   optimize_position: true
   optimize_rotation: true
   optimize_scale: true
+  optimize_kernel_parameters: true
   bvh_update_frequency: 1
   progressive_training:
     feature_type: "sh" # one of [sh, mlp], currently only sh supported
@@ -95,6 +103,12 @@ optimizer:
       lr: 0.001 # 3DGS value: 0.001
     scale:
       lr: 0.005 # 3DGS value: 0.005
+    extended_features:
+      lr: 0.003 
+    extended_features_linear:
+      lr: 0.003
+    kernel_parameters:
+      lr: 0.001 # Beta splatting value: 0.001
 
 scheduler:
   positions:
@@ -123,6 +137,9 @@ loss:
 
   use_scale: false
   lambda_scale: 0.0
+
+  use_extended_features: ${gt:${model.extended_features.dim},0}
+  lambda_extended_features: 1.0
 
 hydra:
   output_subdir: null

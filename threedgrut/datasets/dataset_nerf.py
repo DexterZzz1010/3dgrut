@@ -32,16 +32,26 @@ from threedgrut.utils.logger import logger
 from .protocols import Batch, BoundedMultiViewDataset, DatasetVisualization
 from .utils import create_camera_visualization, get_center_and_diag, get_worker_id
 
+from .features_dataset import FeatureDataset
 
-class NeRFDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
+class NeRFDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, FeatureDataset):
     def __init__(
-        self, path, device="cuda", split="train", ray_jitter=None, bg_color=None
+        self, 
+        config,
+        device="cuda", 
+        split="train", 
+        ray_jitter=None, 
     ):
-        self.root_dir = path
+        # Initialize Dataset
+        Dataset.__init__(self)
+        # Initialize FeatureDataset
+        FeatureDataset.__init__(self, config)
+
+        self.root_dir = config.path
         self.device = device
         self.split = split
         self.ray_jitter = ray_jitter
-        self.bg_color = bg_color
+        self.bg_color = config.model.background.color
 
         # Cache for per-worker GPU tensors (thread-local storage)
         self._worker_gpu_cache = {}
@@ -228,6 +238,10 @@ class NeRFDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
             "pose": torch.tensor(self.poses[idx]).unsqueeze(0),
         }
 
+        features_gt = self.load_features(self.image_paths[idx])
+        if features_gt is not None:
+            output_dict["features_gt"] = features_gt
+
         if os.path.exists(mask_path := self.mask_paths[idx]):
             mask = torch.from_numpy(np.array(Image.open(mask_path))).reshape(
                 1, self.image_h, self.image_w, 1
@@ -236,10 +250,20 @@ class NeRFDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
 
         return output_dict
 
+    def add_features(self, idx: int, feature: torch.Tensor):
+        """Add a feature to the feature dataset.
+        
+        Args:
+            idx: The index of the feature
+            feature: The feature to save
+        """
+        self.save_features(self.image_paths[idx], feature)
+
     def get_gpu_batch_with_intrinsics(self, batch):
         """Add the intrinsics to the batch and move data to GPU."""
 
         data = batch["data"][0].to(self.device, non_blocking=True) / 255.0
+        features_gt = batch["features_gt"][0].to(self.device, non_blocking=True) if "features_gt" in batch else None
         pose = batch["pose"][0].to(self.device, non_blocking=True)
         assert data.dtype == torch.float32
         assert pose.dtype == torch.float32
@@ -249,6 +273,7 @@ class NeRFDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
 
         sample = {
             "rgb_gt": data,
+            "features_gt": features_gt,
             "rays_ori": rays_o_cam,
             "rays_dir": rays_d_cam,
             "T_to_world": pose,

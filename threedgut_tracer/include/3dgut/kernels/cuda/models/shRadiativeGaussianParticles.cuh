@@ -15,8 +15,28 @@
 
 #pragma once
 
-#include <3dgut/kernels/cuda/models/gaussianParticles.cuh>
 #include <3dgut/renderer/renderParameters.h>
+
+namespace threedgut {
+
+struct ParticleDensity {
+    tcnn::vec3 position;
+    float density;
+    tcnn::vec4 quaternion;
+    tcnn::vec3 scale;
+    float shape;
+};
+
+struct ParticeFetchedDensity {
+    tcnn::vec3 position;
+    tcnn::vec3 scale;
+    tcnn::mat3 rotationT;
+    float density;
+    float shape;
+};
+
+};
+
 template <typename TBuffer, bool TDifferentiable>
 struct ShRadiativeGaussianParticlesBuffer {
     TBuffer* ptr = nullptr;
@@ -41,8 +61,9 @@ template <typename Params,
           bool TDifferentiable = true>
 struct ShRadiativeGaussianVolumetricFeaturesParticles : Params, public ExtParams {
 
-    using DensityParameters    = threedgut::ParticeFetchedDensity;
-    using DensityRawParameters = threedgut::ParticleDensity;
+    using DensityParameters         = threedgut::ParticeFetchedDensity;
+    using DensityRawParameters      = threedgut::ParticleDensity;
+    static constexpr int KernelType = ExtParams::KernelType;
 
     __forceinline__ __device__ void initializeDensity(threedgut::MemoryHandles parameters) {
         static_assert(sizeof(DensityRawParameters) == sizeof(gaussianParticle_RawParameters_0), "Sizes must match for binary compatibility");
@@ -218,14 +239,18 @@ struct ShRadiativeGaussianVolumetricFeaturesParticles : Params, public ExtParams
 
     template <bool exclusiveGradient>
     __forceinline__ __device__ void densityIncidentDirectionBwdToBuffer(uint32_t particlesIdx,
-                                                                        const tcnn::vec3& sourcePosition)
+                                                                        const tcnn::vec3& sourcePosition,
+                                                                        const tcnn::vec3& incidentDirectionGrad)
 
     {
-        particleDensityIncidentDirectionBwdToBuffer(particlesIdx,
-                                                    {{reinterpret_cast<gaussianParticle_RawParameters_0*>(m_densityRawParameters.ptr),
-                                                      reinterpret_cast<gaussianParticle_RawParameters_0*>(m_densityRawParameters.gradPtr),
-                                                      exclusiveGradient}},
-                                                    *reinterpret_cast<const float3*>(&sourcePosition));
+        if constexpr (TDifferentiable) {
+            particleDensityIncidentDirectionBwdToBuffer(
+                particlesIdx,
+                {{reinterpret_cast<gaussianParticle_RawParameters_0*>(m_densityRawParameters.ptr),
+                  reinterpret_cast<gaussianParticle_RawParameters_0*>(m_densityRawParameters.gradPtr), exclusiveGradient}},
+                *reinterpret_cast<const float3*>(&sourcePosition),
+                *reinterpret_cast<const float3*>(&incidentDirectionGrad));
+        }
     }
 
     using FeaturesParameters = shRadiativeParticle_Parameters_0;
@@ -252,37 +277,18 @@ struct ShRadiativeGaussianVolumetricFeaturesParticles : Params, public ExtParams
         return *reinterpret_cast<const TFeaturesVec*>(&features);
     }
 
-    template <bool Clamped = true>
-    __forceinline__ __device__ TFeaturesVec featuresCustomFromBuffer(uint32_t particleIdx,
-                                                                     const tcnn::vec3& incidentDirection) const {
-        const float3 gradu = threedgut::radianceFromSpH(m_featureActiveShDegree,
-                                                        reinterpret_cast<const float3*>(&m_featureRawParameters.ptr[particleIdx * ExtParams::RadianceMaxNumSphCoefficients]),
-                                                        *reinterpret_cast<const float3*>(&incidentDirection),
-                                                        Clamped);
-        return *reinterpret_cast<const TFeaturesVec*>(&gradu);
-    }
-
     template <bool exclusiveGradient>
     __forceinline__ __device__ void featuresBwdToBuffer(uint32_t particleIdx,
                                                         const TFeaturesVec& featuresGrad,
-                                                        const tcnn::vec3& incidentDirection) const {
-
-        particleFeaturesBwdToBuffer(particleIdx,
-                                    {{m_featureRawParameters.ptr, m_featureRawParameters.gradPtr, exclusiveGradient}, m_featureActiveShDegree},
-                                    *reinterpret_cast<const float3*>(&featuresGrad),
-                                    *reinterpret_cast<const float3*>(&incidentDirection));
-    }
-
-    template <bool Atomic = false>
-    __forceinline__ __device__ void featuresBwdCustomToBuffer(uint32_t particleIdx,
-                                                              const TFeaturesVec& features,
-                                                              const TFeaturesVec& featuresGrad,
-                                                              const tcnn::vec3& incidentDirection) const {
-        threedgut::radianceFromSpHBwd<Atomic>(m_featureActiveShDegree,
-                                      *reinterpret_cast<const float3*>(&incidentDirection),
-                                      *reinterpret_cast<const float3*>(&featuresGrad),
-                                      reinterpret_cast<float3*>(&m_featureRawParameters.gradPtr[particleIdx * ExtParams::RadianceMaxNumSphCoefficients]),
-                                      *reinterpret_cast<const float3*>(&features));
+                                                        const tcnn::vec3& incidentDirection,
+                                                        tcnn::vec3& incidentDirectionGrad) const {
+        if constexpr (TDifferentiable) {
+            particleFeaturesBwdToBuffer(particleIdx,
+                                        {{m_featureRawParameters.ptr, m_featureRawParameters.gradPtr, exclusiveGradient}, m_featureActiveShDegree},
+                                        *reinterpret_cast<const float3*>(&featuresGrad),
+                                        *reinterpret_cast<const float3*>(&incidentDirection),
+                                        reinterpret_cast<float3*>(&incidentDirectionGrad));
+        }
     }
 
     __forceinline__ __device__ void featureIntegrateFwd(float weight,
@@ -340,70 +346,6 @@ struct ShRadiativeGaussianVolumetricFeaturesParticles : Params, public ExtParams
                                                  reinterpret_cast<float3*>(&integratedFeatures),
                                                  reinterpret_cast<float3*>(&integratedFeaturesGrad));
         }
-    }
-
-    template <bool PerRayRadiance>
-    __forceinline__ __device__ bool processHitFwd(const tcnn::vec3& rayOrigin,
-                                                  const tcnn::vec3& rayDirection,
-                                                  uint32_t particleIdx,
-                                                  const TFeaturesVec* particleFeaturesPtr,
-                                                  float& transmittance,
-                                                  TFeaturesVec& features,
-                                                  float& hitT) const {
-        return threedgut::processHitFwd<ExtParams::KernelDegree, false, PerRayRadiance>(
-            reinterpret_cast<const float3&>(rayOrigin),
-            reinterpret_cast<const float3&>(rayDirection),
-            particleIdx,
-            m_densityRawParameters.ptr,
-            PerRayRadiance ? reinterpret_cast<const float*>(m_featureRawParameters.ptr) : reinterpret_cast<const float*>(particleFeaturesPtr),
-            ExtParams::MinParticleKernelDensity,
-            ExtParams::AlphaThreshold,
-            m_featureActiveShDegree,
-            &transmittance,
-            reinterpret_cast<float3*>(&features),
-            &hitT,
-            nullptr);
-    }
-
-    template <bool PerRayRadiance>
-    __forceinline__ __device__ void processHitBwd(const tcnn::vec3& rayOrigin,
-                                                  const tcnn::vec3& rayDirection,
-                                                  uint32_t particleIdx,
-                                                  const DensityRawParameters& densityRawParameters,
-                                                  DensityRawParameters* densityRawParametersGrad,
-                                                  const TFeaturesVec& particleFeatures,
-                                                  TFeaturesVec* particleFeaturesGradPtr,
-                                                  float& transmittance,
-                                                  float transmittanceBackward,
-                                                  float transmittanceGradient,
-                                                  TFeaturesVec& features,
-                                                  const TFeaturesVec& featuresBackward,
-                                                  const TFeaturesVec& featuresGradient,
-                                                  float& hitT,
-                                                  float hitTBackward,
-                                                  float hitTGradient) const {
-
-        threedgut::processHitBwd<ExtParams::KernelDegree, false, PerRayRadiance>(
-            reinterpret_cast<const float3&>(rayOrigin),
-            reinterpret_cast<const float3&>(rayDirection),
-            particleIdx,
-            reinterpret_cast<const threedgut::ParticleDensity&>(densityRawParameters),
-            reinterpret_cast<threedgut::ParticleDensity*>(densityRawParametersGrad),
-            PerRayRadiance ? reinterpret_cast<const float*>(m_featureRawParameters.ptr) : reinterpret_cast<const float*>(particleFeatures.data()),
-            PerRayRadiance ? reinterpret_cast<float*>(m_featureRawParameters.gradPtr) : reinterpret_cast<float*>(particleFeaturesGradPtr),
-            ExtParams::MinParticleKernelDensity,
-            ExtParams::AlphaThreshold,
-            ExtParams::MinTransmittanceThreshold,
-            m_featureActiveShDegree,
-            transmittanceBackward,
-            transmittance,
-            transmittanceGradient,
-            reinterpret_cast<const float3&>(featuresBackward),
-            reinterpret_cast<float3&>(features),
-            reinterpret_cast<const float3&>(featuresGradient),
-            hitT,
-            hitTBackward,
-            hitTGradient);
     }
 
     template <bool synchedThread = true>
@@ -481,10 +423,96 @@ struct ShRadiativeGaussianVolumetricFeaturesParticles : Params, public ExtParams
         }
     }
 
+    static constexpr bool HasExtendedFeatures = Params::ExtendedFeaturesDim > 0;
+    using TExtendedFeaturesVec                = typename tcnn::vec<HasExtendedFeatures ? Params::ExtendedFeaturesDim : 1>;
+    using TExtendedFeaturesArr                = FixedArray<float, HasExtendedFeatures ? Params::ExtendedFeaturesDim : 1>; //< defined by Slang compiler
+    using ExtendedFeaturesParameters          = TExtendedFeaturesVec;
+
+    inline __device__ void initializeExtendedFeatures(threedgut::MemoryHandles parameters) {
+        if constexpr (HasExtendedFeatures) {
+            m_extendedFeaturesParameters.ptr = parameters.bufferPtr<TExtendedFeaturesVec>(Params::ExtendedFeaturesRawParametersBufferIndex);
+        }
+    };
+
+    inline __device__ void initializeExtendedFeaturesGradient(threedgut::MemoryHandles parametersGradient) {
+        if constexpr (HasExtendedFeatures && TDifferentiable) {
+            m_extendedFeaturesParameters.gradPtr = parametersGradient.bufferPtr<TExtendedFeaturesVec>(Params::ExtendedFeaturesRawParametersGradientBufferIndex);
+        }
+    };
+
+    __forceinline__ __device__ TExtendedFeaturesVec extendedFeaturesFromBuffer(uint32_t particleIdx) const {
+        if constexpr (HasExtendedFeatures) {
+            return m_extendedFeaturesParameters.ptr[particleIdx];
+        }
+    }
+
+    __forceinline__ __device__ void extendedFeaturesIntegrateFwd(float weight,
+                                                                 const TExtendedFeaturesVec& features,
+                                                                 TExtendedFeaturesVec& integratedFeatures) const {
+        particleExtendedFeaturesIntegrateFwd(weight,
+                                             *reinterpret_cast<const TExtendedFeaturesArr*>(features.data()),
+                                             reinterpret_cast<TExtendedFeaturesArr*>(integratedFeatures.data()));
+    }
+
+    template <bool exclusiveGradient>
+    __forceinline__ __device__ void extendedFeaturesIntegrateBwdToBuffer(float alpha,
+                                                                         float& alphaGrad,
+                                                                         uint32_t particleIdx,
+                                                                         const TExtendedFeaturesVec& features,
+                                                                         TExtendedFeaturesVec& integratedFeatures,
+                                                                         TExtendedFeaturesVec& integratedFeaturesGrad) const {
+
+        particleExtendedFeaturesIntegrateBwdToBuffer(alpha,
+                                                     &alphaGrad,
+                                                     particleIdx,
+                                                     {reinterpret_cast<TExtendedFeaturesArr*>(m_extendedFeaturesParameters.ptr),
+                                                      reinterpret_cast<TExtendedFeaturesArr*>(m_extendedFeaturesParameters.gradPtr),
+                                                      exclusiveGradient},
+                                                     *reinterpret_cast<const TExtendedFeaturesArr*>(features.data()),
+                                                     reinterpret_cast<TExtendedFeaturesArr*>(integratedFeatures.data()),
+                                                     reinterpret_cast<TExtendedFeaturesArr*>(integratedFeaturesGrad.data()));
+    }
+
+    __forceinline__ __device__ void extendedFeaturesIntegrateBwdToVec(float alpha,
+                                                                      float& alphaGrad,
+                                                                      uint32_t particleIdx,
+                                                                      const TExtendedFeaturesVec& features,
+                                                                      TExtendedFeaturesVec& integratedFeatures,
+                                                                      TExtendedFeaturesVec& integratedFeaturesGrad,
+                                                                      TExtendedFeaturesVec& featuresGrad) const {
+        if constexpr (HasExtendedFeatures && TDifferentiable) {
+            if (alpha > 0.0f) {
+                const float weight = 1.0f / (1.0f - alpha);
+                integratedFeatures = (integratedFeatures - features * alpha) * weight;
+
+                alphaGrad += tcnn::sum((features - integratedFeatures) * integratedFeaturesGrad);
+
+                featuresGrad += alpha * integratedFeaturesGrad;
+            }
+
+            integratedFeaturesGrad = (1 - alpha) * integratedFeaturesGrad;
+        }
+    }
+
+    template <bool synchedThread = true>
+    __forceinline__ __device__ void processHitBwdUpdateExtendedFeaturesGradientToBuffer(uint32_t particleIdx,
+                                                                                        TExtendedFeaturesVec& featuresGrad,
+                                                                                        uint32_t tileThreadIdx) {
+        if constexpr (HasExtendedFeatures && TDifferentiable) {
+            processHitBwdUpdateFeaturesGradient<Params::ExtendedFeaturesDim, synchedThread>(particleIdx,
+                                                                                            featuresGrad,
+                                                                                            m_extendedFeaturesParameters.gradPtr,
+                                                                                            tileThreadIdx);
+        }
+    }
+
 private:
     ShRadiativeGaussianParticlesBuffer<DensityRawParameters, TDifferentiable>
         m_densityRawParameters;
 
     int m_featureActiveShDegree = 0;
     ShRadiativeGaussianParticlesBuffer<float3, TDifferentiable> m_featureRawParameters;
+
+    ShRadiativeGaussianParticlesOptionalBuffer<TExtendedFeaturesVec, TDifferentiable, HasExtendedFeatures>
+        m_extendedFeaturesParameters;
 };

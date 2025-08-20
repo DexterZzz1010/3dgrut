@@ -15,7 +15,7 @@
 
 namespace gaussianParticle
 {
-    static const int KernelDegree = GAUSSIAN_PARTICLE_KERNEL_DEGREE;
+    static const int KernelType = GAUSSIAN_PARTICLE_KERNEL_TYPE;
     static const float MinParticleKernelDensity = GAUSSIAN_PARTICLE_MIN_KERNEL_DENSITY;
     static const float MaxParticleAlpha = GAUSSIAN_PARTICLE_MAX_ALPHA;
     static const float MinParticleAlpha = GAUSSIAN_PARTICLE_MIN_ALPHA;
@@ -32,3 +32,14 @@ namespace shRadiativeParticle
 };
 
 #include <3dgut/kernels/slang/models/shRadiativeParticles.slang>
+
+namespace extendedFeatureParticle
+{
+#if EXTENDED_FEATURES_DIM > 0
+static const int ExtendedFeaturesDim = EXTENDED_FEATURES_DIM;
+#else
+static const int ExtendedFeaturesDim = 1;
+#endif
+};
+
+#include <3dgut/kernels/slang/models/extendedFeatureParticles.slang>

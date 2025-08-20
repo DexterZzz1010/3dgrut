@@ -105,7 +105,7 @@ extern "C" __global__ void __raygen__rg() {
     RayPayload rayPayload;
 
     const float particleScaleMinResponse =
-        PipelineParameters::ClampedPrimitive || (PipelineParameters::ParticleKernelDegree == 0) ? params.hitMinGaussianResponse : logf(params.hitMinGaussianResponse);
+        PipelineParameters::ClampedPrimitive || (PipelineParameters::ParticleKernelType == 0) ? params.hitMinGaussianResponse : logf(params.hitMinGaussianResponse);
 
     while ((rayLastHitDistance <= minMaxT.y) && (rayTransmittance > params.minTransmittance)) {
         trace(rayPayload, rayOrigin, rayDirection, rayLastHitDistance + epsT, minMaxT.x, minMaxT.y);
@@ -123,7 +123,7 @@ extern "C" __global__ void __raygen__rg() {
 
                 const float rayParticleHitDistance = rayHit.distance;
                 const float rayParticleHitKernelResponse =
-                    particleScaledResponse<PipelineParameters::ParticleKernelDegree, PipelineParameters::ClampedPrimitive>(
+                    particleScaledResponse<PipelineParameters::ParticleKernelType, PipelineParameters::ClampedPrimitive>(
                         rayHit.particleSquaredDistance, particleScaleMinResponse, particleNormalsDensity.w);
 
                 const float rayParticleAlpha = fminf(0.99f, rayParticleHitKernelResponse * particleNormalsDensity.w);

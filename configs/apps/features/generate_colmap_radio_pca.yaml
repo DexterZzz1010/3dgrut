@@ -1,0 +1,13 @@
+# @package _global_
+
+# order in which configs override each other (/* - denotes a relative search path)
+defaults:
+  - _self_
+  - /dataset: colmap
+  - /features/extractors: nv_radio
+  - /features/compressors: pca
+
+path: ???
+
+num_workers: 24
+random_dataset_sample: false

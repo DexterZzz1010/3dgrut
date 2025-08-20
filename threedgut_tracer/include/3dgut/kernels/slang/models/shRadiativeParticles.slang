@@ -42,7 +42,7 @@ Parameters fetchParametersFromBuffer(no_diff uint32_t particleIdx,
 {
     Parameters parameters;
     const uint32_t particleOffset = particleIdx * RadianceMaxNumSphCoefficients;
-    [unroll] for (int i = 0; i < RadianceMaxNumSphCoefficients; ++i) {
+    [ForceUnroll] for (int i = 0; i < RadianceMaxNumSphCoefficients; ++i) {
         parameters.sphCoefficients[i] = parametersBuffer._dataPtr[particleOffset + i];
     }
     return parameters;
@@ -54,14 +54,14 @@ void fetchParametersFromBufferBwd(no_diff uint32_t particleIdx,
                                   Parameters parametersGrad) 
 {
     const uint32_t particleOffset = particleIdx * RadianceMaxNumSphCoefficients;
-    [unroll] for (int i = 0; i < RadianceMaxNumSphCoefficients; ++i) {
+    [ForceUnroll] for (int i = 0; i < RadianceMaxNumSphCoefficients; ++i) {
         const vector<float, Dim> coeffs = parametersGrad.sphCoefficients[i];
         if (parametersBuffer.exclusiveGradient) {
-            [unroll] for (int j = 0; j < Dim; ++j) {
+            [ForceUnroll] for (int j = 0; j < Dim; ++j) {
                 parametersBuffer._gradPtr[particleOffset + i][j] += coeffs[j];
             }
         } else {
-            [unroll] for (int j = 0; j < Dim; ++j) {
+            [ForceUnroll] for (int j = 0; j < Dim; ++j) {
                 InterlockedAdd(parametersBuffer._gradPtr[particleOffset + i][j], coeffs[j]);
             }
         }
@@ -70,14 +70,14 @@ void fetchParametersFromBufferBwd(no_diff uint32_t particleIdx,
 
 [BackwardDifferentiable] [ForceInline]
 vector<float, Dim> radianceFromBuffer(no_diff uint32_t particleIdx,
-                                      no_diff float3 incidentDirection,
+                                      in float3 incidentDirection,
                                       no_diff uint32_t sphDegree,
                                       no_diff ParametersBuffer parametersBuffer)
 {
     return sphericalHarmonics.decode<Dim, RadianceMaxNumSphCoefficients>(
-               sphDegree,
-               fetchParametersFromBuffer(particleIdx, parametersBuffer).sphCoefficients,
-               incidentDirection);
+        sphDegree,
+        fetchParametersFromBuffer(particleIdx, parametersBuffer).sphCoefficients,
+        incidentDirection);
 }
 
 [BackwardDifferentiable][ForceInline]
@@ -242,13 +242,18 @@ inline void particleFeaturesIntegrateFwd(in float weight,
     in uint32_t particleIdx,
     shRadiativeParticle.CommonParameters commonParameters,
     in vector<float, shRadiativeParticle.Dim> featuresGrad,
-    in float3 incidentDirection
+    in float3 incidentDirection,
+    inout float3 incidentDirectionGrad
 )
 {
+    DifferentialPair<float3> incidentDirectionDiff = DifferentialPair<float3>(incidentDirection, incidentDirectionGrad);
+
     bwd_diff(shRadiativeParticle.radianceFromBuffer)(
         particleIdx,
-        incidentDirection,
+        incidentDirectionDiff,
         commonParameters.sphDegree,
         commonParameters.parametersBuffer,
         featuresGrad);
+
+    incidentDirectionGrad = incidentDirectionDiff.getDifferential();
 }

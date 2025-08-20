@@ -24,30 +24,41 @@
 #include <optix.h>
 
 namespace {
-__device__ inline float kernelScale(float density, float modulatedMinResponse, uint32_t opts, float kernelDegree) {
+// TODO : switch to using the kernel type
+__device__ inline float kernelScale(float density, float modulatedMinResponse, uint32_t opts, int kernelType, float kernelDegree) {
+
     const float responseModulation = opts & MOGRenderAdaptiveKernelClamping ? density : 1.0f;
-    const float minResponse        = fminf(modulatedMinResponse / responseModulation, 0.97f);
+    const float minResponse        = fminf(modulatedMinResponse / responseModulation, 0.997f);
 
     // bump kernel
-    if (kernelDegree < 0) {
-        const float k  = fabsf(kernelDegree);
+    if (kernelType < 0) {
+        const float k  = fabsf(kernelType);
         const float s  = 1.0 / powf(3.0, k);
         const float ks = powf((1.f / (logf(minResponse) - 1.f) + 1.f) / s, 1.f / k);
         return ks;
     }
 
     // linear kernel
-    if (kernelDegree == 0) {
+    else if (kernelType == 0) {
         return ((1.0f - minResponse) / 3.0f) / -0.329630334487f;
     }
 
-    /// generalized gaussian of degree b : scaling a = -4.5/3^b
-    /// e^{a*|x|^b}
-    const float b = kernelDegree;
-    const float a = -4.5f / powf(3.0f, static_cast<float>(b));
-    /// find distance r (>0) st e^{a*r^b} = minResponse
-    /// TODO : reshuffle the math to call powf only once
-    return powf(logf(minResponse) / a, 1.0f / b);
+    // (generalized) gaussian kernel
+    else if ((kernelType > 0) && (kernelType <= 9)) {
+
+        kernelDegree = kernelType != 9 ? static_cast<float>(kernelType) : kernelDegree;
+
+        /// generalized gaussian of degree b : scaling a = -4.5/3^b
+        /// e^{a*|x|^b}
+        const float b = kernelDegree;
+        const float a = -4.5f / powf(3.0f, b);
+        /// find distance r (>0) st e^{a*r^b} = minResponse
+        /// TODO : reshuffle the math to call powf only once
+        return powf(logf(minResponse) / a, 1.0f / b);
+    }
+
+    // default
+    return 3.0f;
 }
 
 constexpr uint32_t octaHedronNumVrt = 6;
@@ -66,9 +77,10 @@ __global__ void computeGaussianEnclosingOctaHedronKernel(
     const float4* __restrict__ gRot,
     const float3* __restrict__ gScl,
     const float* __restrict__ gDns,
+    const float* __restrict__ gKernelDegree,
     const float kernelMinResponse,
     const uint32_t opts,
-    const float degree,
+    const int kernelType,
     float3* __restrict__ gPrimVrt,
     int3* __restrict__ gPrimTri) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -85,7 +97,7 @@ __global__ void computeGaussianEnclosingOctaHedronKernel(
             make_float3(0, 0, -octaHedraDiag), make_float3(0, octaHedraDiag, 0), make_float3(-octaHedraDiag, 0, 0),
             make_float3(0, -octaHedraDiag, 0), make_float3(octaHedraDiag, 0, 0), make_float3(0, 0, octaHedraDiag)};
 
-        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, degree) * scl;
+        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, kernelType, gKernelDegree[idx]) * scl;
 #pragma unroll
         for (int i = 0; i < octaHedronNumVrt; ++i) {
             float3& vrt = gPrimVrt[sVertIdx + i];
@@ -114,9 +126,10 @@ __global__ void computeGaussianEnclosingTriHexaKernel(
     const float4* __restrict__ gRot,
     const float3* __restrict__ gScl,
     const float* __restrict__ gDns,
+    const float* __restrict__ gKernelDegree,
     const float kernelMinResponse,
     const uint32_t opts,
-    const float degree,
+    const int kernelType,
     float3* __restrict__ gPrimVrt,
     int3* __restrict__ gPrimTri) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -132,7 +145,7 @@ __global__ void computeGaussianEnclosingTriHexaKernel(
 
         const uint32_t sVertIdx = triHexaNumVrt * idx;
         const uint32_t sTriIdx  = triHexaNumTri * idx;
-        const float3 kscl       = kernelScale(gDns[idx], kernelMinResponse, opts, degree) * scl;
+        const float3 kscl       = kernelScale(gDns[idx], kernelMinResponse, opts, kernelType, gKernelDegree[idx]) * scl;
 #pragma unroll
         for (int i = 0; i < triHexaNumVrt; ++i) {
             float3& vrt = gPrimVrt[sVertIdx + i];
@@ -163,9 +176,10 @@ __global__ void computeGaussianEnclosingTriSurfelKernel(
     const float4* __restrict__ gRot,
     const float3* __restrict__ gScl,
     const float* __restrict__ gDns,
+    const float* __restrict__ gKernelDegree,
     const float kernelMinResponse,
     const uint32_t opts,
-    const float degree,
+    const int kernelType,
     float3* __restrict__ gPrimVrt,
     int3* __restrict__ gPrimTri,
     float4* __restrict__ gNormalDensity) {
@@ -187,7 +201,7 @@ __global__ void computeGaussianEnclosingTriSurfelKernel(
 
         const uint32_t sVertIdx = triSurfelNumVrt * idx;
         const uint32_t sTriIdx  = triSurfelNumTri * idx;
-        const float3 kscl       = kernelScale(density, kernelMinResponse, opts, degree) * scl;
+        const float3 kscl       = kernelScale(density, kernelMinResponse, opts, kernelType, gKernelDegree[idx]) * scl;
 #pragma unroll
         for (int i = 0; i < triSurfelNumVrt; ++i) {
             float3& vrt = gPrimVrt[sVertIdx + i];
@@ -219,9 +233,10 @@ __global__ void computeGaussianEnclosingTriBaryKernel(
     const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> gRot,
     const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> gScl,
     const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> gDns,
+    const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> gKernelDegree,
     const float kernelMinResponse,
     const uint32_t opts,
-    const float degree,
+    const int kernelType,
     float3* __restrict__ gPrimVrt,
     int3* __restrict__ gPrimTri) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -280,9 +295,10 @@ __global__ void computeGaussianEnclosingTetraHedronKernel(
     const float4* __restrict__ gRot,
     const float3* __restrict__ gScl,
     const float* __restrict__ gDns,
+    const float* __restrict__ gKernelDegree,
     const float kernelMinResponse,
     const uint32_t opts,
-    const float degree,
+    const int kernelType,
     float3* __restrict__ gPrimVrt,
     int3* __restrict__ gPrimTri) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -301,7 +317,7 @@ __global__ void computeGaussianEnclosingTetraHedronKernel(
             make_float3(0, 0, tetraHedraHeight - tetraHedraInRadius),
             make_float3(0.5 * tetraHedraEdge, -tetraHedraFaceInRadius, -1)};
 
-        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, degree) * scl;
+        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, kernelType, gKernelDegree[idx]) * scl;
 #pragma unroll
         for (int i = 0; i < tetraHedronNumVrt; ++i) {
             float3& vrt = gPrimVrt[sVertIdx + i];
@@ -343,9 +359,10 @@ __global__ void computeGaussianEnclosingDiamondKernel(
     const float4* __restrict__ gRot,
     const float3* __restrict__ gScl,
     const float* __restrict__ gDns,
+    const float* __restrict__ gKernelDegree,
     const float kernelMinResponse,
     const uint32_t opts,
-    const float degree,
+    const int kernelType,
     float3* __restrict__ gPrimVrt,
     int3* __restrict__ gPrimTri) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -363,7 +380,7 @@ __global__ void computeGaussianEnclosingDiamondKernel(
                                                   make_float3(0, 0, diamondFaceHeight - 1),
                                                   make_float3(0.5 * diamondEdge, 0, -1)};
 
-        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, degree) * scl;
+        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, kernelType, gKernelDegree[idx]) * scl;
 #pragma unroll
         for (int i = 0; i < diamondNumVrt; ++i) {
             float3& vrt = gPrimVrt[sVertIdx + i];
@@ -389,15 +406,16 @@ __global__ void computeGaussianEnclosingSphereKernel(
     const float4* __restrict__ gRot,
     const float3* __restrict__ gScl,
     const float* __restrict__ gDns,
+    const float* __restrict__ gKernelDegree,
     const float kernelMinResponse,
     const uint32_t opts,
-    const float degree,
+    const int kernelType,
     float3* __restrict__ gPrimCenter,
     float* __restrict__ gPrimRadius) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < gNum) {
         gPrimCenter[idx] = gPos[idx];
-        gPrimRadius[idx] = fmaxf(gScl[idx].x, fmaxf(gScl[idx].y, gScl[idx].z)) * kernelScale(gDns[idx], kernelMinResponse, opts, degree);
+        gPrimRadius[idx] = fmaxf(gScl[idx].x, fmaxf(gScl[idx].y, gScl[idx].z)) * kernelScale(gDns[idx], kernelMinResponse, opts, kernelType, gKernelDegree[idx]);
     }
 }
 
@@ -450,9 +468,10 @@ __global__ void computeGaussianEnclosingIcosaHedronKernel(
     const float4* __restrict__ gRot,
     const float3* __restrict__ gScl,
     const float* __restrict__ gDns,
+    const float* __restrict__ gKernelDegree,
     const float kernelMinResponse,
     const uint32_t opts,
-    const float degree,
+    const int kernelType,
     float3* __restrict__ gPrimVrt,
     int3* __restrict__ gPrimTri) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -471,7 +490,7 @@ __global__ void computeGaussianEnclosingIcosaHedronKernel(
             make_float3(goldenRatio, 0, 1), make_float3(0, -1, goldenRatio), make_float3(-1, -goldenRatio, 0),
             make_float3(0, -1, -goldenRatio), make_float3(goldenRatio, 0, -1), make_float3(1, -goldenRatio, 0)};
 
-        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, degree) * scl * icosaVrtScale;
+        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, kernelType, gKernelDegree[idx]) * scl * icosaVrtScale;
 #pragma unroll
         for (int i = 0; i < icosaHedronNumVrt; ++i) {
             float3& vrt = gPrimVrt[sVertIdx + i];
@@ -501,9 +520,10 @@ __global__ void computeGaussianEnclosingAABBKernel(
     const float4* __restrict__ gRot,
     const float3* __restrict__ gScl,
     const float* __restrict__ gDns,
+    const float* __restrict__ gKernelDegree,
     const float kernelMinResponse,
     const uint32_t opts,
-    const float degree,
+    const int kernelType,
     OptixAabb* __restrict__ gPrimAABB) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < gNum) {
@@ -517,7 +537,7 @@ __global__ void computeGaussianEnclosingAABBKernel(
                                             make_float3(1, 1, -1), make_float3(1, 1, 1)};
 
         OptixAabb& aabb   = gPrimAABB[idx];
-        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, degree) * scl;
+        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, kernelType, gKernelDegree[idx]) * scl;
 #pragma unroll
         for (int i = 0; i < aabbNumVrt; ++i) {
             const float3 vrt = (aabbVrt[i] * kscl) * rot + trans;
@@ -546,9 +566,10 @@ __global__ void computeGaussianEnclosingInstancesKernel(
     const float4* __restrict__ gRot,
     const float3* __restrict__ gScl,
     const float* __restrict__ gDns,
+    const float* __restrict__ gKernelDegree,
     const float kernelMinResponse,
     const uint32_t opts,
-    const float degree,
+    const int kernelType,
     OptixTraversableHandle ias,
     OptixInstance* __restrict__ gPrimInstances) {
 
@@ -565,7 +586,7 @@ __global__ void computeGaussianEnclosingInstancesKernel(
                                             make_float3(1, 1, -1), make_float3(1, 1, 1)};
 
         OptixAabb aabb;
-        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, degree) * scl;
+        const float3 kscl = kernelScale(gDns[idx], kernelMinResponse, opts, kernelType, gKernelDegree[idx]) * scl;
 #pragma unroll
         for (int i = 0; i < aabbNumVrt; ++i) {
             const float3 vrt = (aabbVrt[i] * kscl) * rot + trans;
@@ -669,9 +690,10 @@ void computeGaussianEnclosingOctaHedron(uint32_t gNum,
                                         const float4* gRot,
                                         const float3* gScl,
                                         const float* gDns,
+                                        const float* gKernelDegree,
                                         float kernelMinResponse,
                                         uint32_t opts,
-                                        const float degree,
+                                        const int kernelType,
                                         float3* gPrimVrt,
                                         int3* gPrimTri,
                                         cudaStream_t stream) {
@@ -683,7 +705,8 @@ void computeGaussianEnclosingOctaHedron(uint32_t gNum,
         gRot,
         gScl,
         gDns,
-        kernelMinResponse, opts, degree, gPrimVrt, gPrimTri);
+        gKernelDegree,
+        kernelMinResponse, opts, kernelType, gPrimVrt, gPrimTri);
 }
 
 void computeGaussianEnclosingIcosaHedron(uint32_t gNum,
@@ -691,9 +714,10 @@ void computeGaussianEnclosingIcosaHedron(uint32_t gNum,
                                          const float4* gRot,
                                          const float3* gScl,
                                          const float* gDns,
+                                         const float* gKernelDegree,
                                          float kernelMinResponse,
                                          uint32_t opts,
-                                         const float degree,
+                                         const int kernelType,
                                          float3* gPrimVrt,
                                          int3* gPrimTri,
                                          cudaStream_t stream) {
@@ -705,7 +729,8 @@ void computeGaussianEnclosingIcosaHedron(uint32_t gNum,
                                                                               gRot,
                                                                               gScl,
                                                                               gDns,
-                                                                              kernelMinResponse, opts, degree, gPrimVrt, gPrimTri);
+                                                                              gKernelDegree,
+                                                                              kernelMinResponse, opts, kernelType, gPrimVrt, gPrimTri);
 }
 
 void computeGaussianEnclosingTetraHedron(uint32_t gNum,
@@ -713,9 +738,10 @@ void computeGaussianEnclosingTetraHedron(uint32_t gNum,
                                          const float4* gRot,
                                          const float3* gScl,
                                          const float* gDns,
+                                         const float* gKernelDegree,
                                          float kernelMinResponse,
                                          uint32_t opts,
-                                         const float degree,
+                                         const int kernelType,
                                          float3* gPrimVrt,
                                          int3* gPrimTri,
                                          cudaStream_t stream) {
@@ -727,7 +753,8 @@ void computeGaussianEnclosingTetraHedron(uint32_t gNum,
                                                                               gRot,
                                                                               gScl,
                                                                               gDns,
-                                                                              kernelMinResponse, opts, degree, gPrimVrt, gPrimTri);
+                                                                              gKernelDegree,
+                                                                              kernelMinResponse, opts, kernelType, gPrimVrt, gPrimTri);
 }
 
 void computeGaussianEnclosingDiamond(uint32_t gNum,
@@ -735,9 +762,10 @@ void computeGaussianEnclosingDiamond(uint32_t gNum,
                                      const float4* gRot,
                                      const float3* gScl,
                                      const float* gDns,
+                                     const float* gKernelDegree,
                                      float kernelMinResponse,
                                      uint32_t opts,
-                                     const float degree,
+                                     const int kernelType,
                                      float3* gPrimVrt,
                                      int3* gPrimTri,
                                      cudaStream_t stream) {
@@ -749,7 +777,8 @@ void computeGaussianEnclosingDiamond(uint32_t gNum,
                                                                           gRot,
                                                                           gScl,
                                                                           gDns,
-                                                                          kernelMinResponse, opts, degree, gPrimVrt, gPrimTri);
+                                                                          gKernelDegree,
+                                                                          kernelMinResponse, opts, kernelType, gPrimVrt, gPrimTri);
 }
 
 void computeGaussianEnclosingSphere(uint32_t gNum,
@@ -757,9 +786,10 @@ void computeGaussianEnclosingSphere(uint32_t gNum,
                                     const float4* gRot,
                                     const float3* gScl,
                                     const float* gDns,
+                                    const float* gKernelDegree,
                                     float kernelMinResponse,
                                     uint32_t opts,
-                                    const float degree,
+                                    const int kernelType,
                                     float3* gPrimCenter,
                                     float* gPrimRadius,
                                     cudaStream_t stream) {
@@ -771,7 +801,8 @@ void computeGaussianEnclosingSphere(uint32_t gNum,
                                                                          gRot,
                                                                          gScl,
                                                                          gDns,
-                                                                         kernelMinResponse, opts, degree, gPrimCenter, gPrimRadius);
+                                                                         gKernelDegree,
+                                                                         kernelMinResponse, opts, kernelType, gPrimCenter, gPrimRadius);
 }
 
 void copyGaussianEnclosingPrimitives(uint32_t gNum,
@@ -787,8 +818,8 @@ void copyGaussianEnclosingPrimitives(uint32_t gNum,
 
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(
         gPrimVertTs.scalar_type(), "copyGaussianEnclosingPrimitives", ([&] { copyGaussianEnclosingPrimitivesKernel<scalar_t><<<blocks, threads, 0, stream>>>(
-                                                                          gNum, gNumVert, gNumTri, gPrimVertTs.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                                                          gPrimTriTs.packed_accessor32<int32_t, 2, torch::RestrictPtrTraits>(), gPrimVrt, gPrimTri); }));
+                                                                                 gNum, gNumVert, gNumTri, gPrimVertTs.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                                                 gPrimTriTs.packed_accessor32<int32_t, 2, torch::RestrictPtrTraits>(), gPrimVrt, gPrimTri); }));
 }
 
 void computeGaussianEnclosingAABB(uint32_t gNum,
@@ -796,9 +827,10 @@ void computeGaussianEnclosingAABB(uint32_t gNum,
                                   const float4* gRot,
                                   const float3* gScl,
                                   const float* gDns,
+                                  const float* gKernelDegree,
                                   float kernelMinResponse,
                                   uint32_t opts,
-                                  const float degree,
+                                  const int kernelType,
                                   OptixAabb* gPrimAABB,
                                   cudaStream_t stream) {
     const uint32_t threads = 1024;
@@ -810,7 +842,8 @@ void computeGaussianEnclosingAABB(uint32_t gNum,
         gRot,
         gScl,
         gDns,
-        kernelMinResponse, opts, degree, gPrimAABB);
+        gKernelDegree,
+        kernelMinResponse, opts, kernelType, gPrimAABB);
 }
 
 void computeGaussianEnclosingInstances(uint32_t gNum,
@@ -818,9 +851,10 @@ void computeGaussianEnclosingInstances(uint32_t gNum,
                                        const float4* gRot,
                                        const float3* gScl,
                                        const float* gDns,
+                                       const float* gKernelDegree,
                                        float kernelMinResponse,
                                        uint32_t opts,
-                                       const float degree,
+                                       const int kernelType,
                                        OptixTraversableHandle ias,
                                        OptixInstance* gPrimInstances,
                                        cudaStream_t stream) {
@@ -833,7 +867,8 @@ void computeGaussianEnclosingInstances(uint32_t gNum,
         gRot,
         gScl,
         gDns,
-        kernelMinResponse, opts, degree, ias, gPrimInstances);
+        gKernelDegree,
+        kernelMinResponse, opts, kernelType, ias, gPrimInstances);
 }
 
 void computeGaussianEnclosingTriHexa(uint32_t gNum,
@@ -841,9 +876,10 @@ void computeGaussianEnclosingTriHexa(uint32_t gNum,
                                      const float4* gRot,
                                      const float3* gScl,
                                      const float* gDns,
+                                     const float* gKernelDegree,
                                      float kernelMinResponse,
                                      uint32_t opts,
-                                     const float degree,
+                                     const int kernelType,
                                      float3* gPrimVrt,
                                      int3* gPrimTri,
                                      cudaStream_t stream) {
@@ -855,7 +891,8 @@ void computeGaussianEnclosingTriHexa(uint32_t gNum,
                                                                           gRot,
                                                                           gScl,
                                                                           gDns,
-                                                                          kernelMinResponse, opts, degree, gPrimVrt, gPrimTri);
+                                                                          gKernelDegree,
+                                                                          kernelMinResponse, opts, kernelType, gPrimVrt, gPrimTri);
 }
 
 void computeGaussianEnclosingTriSurfel(uint32_t gNum,
@@ -863,9 +900,10 @@ void computeGaussianEnclosingTriSurfel(uint32_t gNum,
                                        const float4* gRot,
                                        const float3* gScl,
                                        const float* gDns,
+                                       const float* gKernelDegree,
                                        float kernelMinResponse,
                                        uint32_t opts,
-                                       const float degree,
+                                       const int kernelType,
                                        float3* gPrimVrt,
                                        int3* gPrimTri,
                                        float4* gNormalDensity,
@@ -878,7 +916,8 @@ void computeGaussianEnclosingTriSurfel(uint32_t gNum,
                                                                             gRot,
                                                                             gScl,
                                                                             gDns,
-                                                                            kernelMinResponse, opts, degree, gPrimVrt, gPrimTri, gNormalDensity);
+                                                                            gKernelDegree,
+                                                                            kernelMinResponse, opts, kernelType, gPrimVrt, gPrimTri, gNormalDensity);
 }
 
 void computeGaussianEnclosingTriBary(uint32_t gNum,
@@ -886,9 +925,10 @@ void computeGaussianEnclosingTriBary(uint32_t gNum,
                                      torch::Tensor gRot,
                                      torch::Tensor gScl,
                                      torch::Tensor gDns,
+                                     torch::Tensor gKernelDegree,
                                      float kernelMinResponse,
                                      uint32_t opts,
-                                     const float degree,
+                                     const int kernelType,
                                      float3* gPrimVrt,
                                      int3* gPrimTri,
                                      cudaStream_t stream) {
@@ -897,11 +937,12 @@ void computeGaussianEnclosingTriBary(uint32_t gNum,
 
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(
         gPos.scalar_type(), "computeGaussianEnclosingTriBary", ([&] { computeGaussianEnclosingTriBaryKernel<scalar_t>
-                                                                   <<<blocks, threads, 0, stream>>>(gNum, gPos.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                                                                                    gRot.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                                                                                    gScl.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                                                                                    gDns.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                                                                                    kernelMinResponse, opts, degree, gPrimVrt, gPrimTri); }));
+                                                                          <<<blocks, threads, 0, stream>>>(gNum, gPos.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                                                                           gRot.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                                                                           gScl.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                                                                           gDns.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                                                                           gKernelDegree.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                                                                           kernelMinResponse, opts, kernelType, gPrimVrt, gPrimTri); }));
 }
 
 void generatePinholeCameraRays(int2 resolution, float2 tanFoV, const float4* invViewMatrix, float3* rayOri, float3* rayDir, cudaStream_t stream) {

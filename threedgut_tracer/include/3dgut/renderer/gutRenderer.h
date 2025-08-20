@@ -38,11 +38,13 @@ public:
             void* dptrValuesBuffer;
             void* dptrDensityParameters;
             void* dptrRadianceParameters;
+            void* dptrExtendedFeaturesParameters;
         } parameters;
 
         struct {
             void* dptrDensityGradients;
             void* dptrRadianceGradients;
+            void* dptrExtendedFeaturesGradients;
         } gradients;
 
         threedgut::CudaBuffer parametersBuffer;
@@ -68,6 +70,7 @@ public:
                          float* worldHitCountCudaPtr,
                          float* worldHitDistanceCudaPtr,
                          tcnn::vec4* radianceDensityCudaPtr,
+                         float* extendedFeaturesCudaPtr,
                          int* particlesVisibilityCudaPtr,
                          Parameters& parameters,
                          int cudaDeviceIndex,
@@ -80,6 +83,8 @@ public:
                           const float* worldHitDistanceGradientCudaPtr,
                           const tcnn::vec4* radianceDensityCudaPtr,
                           const tcnn::vec4* radianceDensityGradientCudaPtr,
+                          const float* extendedFeaturesCudaPtr,
+                          const float* extendedFeaturesGradientCudaPtr,
                           tcnn::vec3* worldRayOriginGradientCudaPtr,
                           tcnn::vec3* worldRayDirectionGradientCudaPtr,
                           Parameters& parameters,

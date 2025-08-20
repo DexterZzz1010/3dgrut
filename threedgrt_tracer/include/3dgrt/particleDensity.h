@@ -20,5 +20,5 @@ struct ParticleDensity
     float density;
     float4 quaternion;
     float3 scale;
-    float padding;
+    float shape;
 };

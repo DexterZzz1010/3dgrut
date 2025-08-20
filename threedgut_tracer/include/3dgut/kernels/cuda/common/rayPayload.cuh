@@ -19,9 +19,12 @@
 #include <3dgut/kernels/cuda/common/random.cuh>
 #include <3dgut/renderer/renderParameters.h>
 
-template <int FeatN>
+template <int BaseFeatN = 3, int ExtFeatN = 0>
 struct RayPayload {
-    static constexpr uint32_t FeatDim = FeatN;
+    static constexpr uint32_t BaseFeatDim   = BaseFeatN;
+    static constexpr uint32_t ExtFeatDim    = ExtFeatN;
+    static constexpr uint32_t FeatDim       = BaseFeatDim + ExtFeatDim;
+    static constexpr uint32_t InvalidRayIdx = -1U;
 
     threedgut::TTimestamp timestamp;
     tcnn::vec3 origin;
@@ -39,7 +42,7 @@ struct RayPayload {
     };
     uint32_t flags;
     uint32_t idx;
-    tcnn::vec<FeatN> features;
+    tcnn::vec<FeatDim> features;
 
 #if GAUSSIAN_ENABLE_HIT_COUNT
     uint32_t hitN;
@@ -114,12 +117,23 @@ __device__ __inline__ void finalizeRay(const TRayPayload& ray,
                                        float* __restrict__ worldCountPtr,
                                        float* __restrict__ worldHitDistancePtr,
                                        tcnn::vec4* __restrict__ radianceDensityPtr,
+                                       float* __restrict__ extendedFeaturesPtr,
                                        const tcnn::mat4x3& sensorToWorldTransform) {
     if (!ray.isValid()) {
         return;
     }
 
-    radianceDensityPtr[ray.idx] = {ray.features[0], ray.features[1], ray.features[2], (1.0f - ray.transmittance)};
+    if constexpr (TRayPayload::BaseFeatDim > 0) {
+        static_assert(TRayPayload::BaseFeatDim == 3, "Only RGB radiance is supported for now");
+        radianceDensityPtr[ray.idx] = {ray.features[0], ray.features[1], ray.features[2], (1.0f - ray.transmittance)};
+    }
+
+    if constexpr (TRayPayload::ExtFeatDim > 0) {
+        reinterpret_cast<tcnn::vec<TRayPayload::ExtFeatDim>*>(extendedFeaturesPtr)[ray.idx] =
+            reinterpret_cast<tcnn::vec<TRayPayload::ExtFeatDim>*>(extendedFeaturesPtr)[ray.idx] * ray.transmittance +
+            threedgut::sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.features);
+    }
+
 
     worldHitDistancePtr[ray.idx] = ray.hitT;
 

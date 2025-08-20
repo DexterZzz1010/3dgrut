@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// clang-format off
 #include <3dgrt/pipelineParameters.h>
 #include <3dgrt/kernels/cuda/gaussianParticles.cuh>
 // clang-format on
@@ -109,12 +110,33 @@ extern "C" __global__ void __raygen__rg() {
     const float3 rayOrigin    = params.rayWorldOrigin(idx);
     const float3 rayDirection = params.rayWorldDirection(idx);
 
-    float3 rayIntegratedRadiance     = make_float3(params.rayRadiance[idx.z][idx.y][idx.x][0], params.rayRadiance[idx.z][idx.y][idx.x][1], params.rayRadiance[idx.z][idx.y][idx.x][2]);
+    float3 rayIntegratedRadiance = make_float3(params.rayRadiance[idx.z][idx.y][idx.x][0], params.rayRadiance[idx.z][idx.y][idx.x][1], params.rayRadiance[idx.z][idx.y][idx.x][2]);
+#if EXTENDED_FEATURES_DIM
+    float rayIntegratedExtendedFeatures[PipelineParameters::ExtendedFeaturesDim];
+#pragma unroll
+    for (int i = 0; i < PipelineParameters::ExtendedFeaturesDim; i++) {
+        rayIntegratedExtendedFeatures[i] = params.rayExtendedFeatures[idx.z][idx.y][idx.x][i];
+    }
+    const float* rayIntegratedExtendedFeaturesPtr = rayIntegratedExtendedFeatures;
+#else
+    const float* rayIntegratedExtendedFeaturesPtr = nullptr;
+#endif
+
     float rayIntegratedTransmittance = 1.0f - params.rayDensity[idx.z][idx.y][idx.x][0];
     float rayIntegratedHitDistance   = params.rayHitDistance[idx.z][idx.y][idx.x][0];
     float rayMaxHitDistance          = params.rayHitDistance[idx.z][idx.y][idx.x][1];
 
-    float3 rayRadianceGrad     = make_float3(params.rayRadianceGrad[idx.z][idx.y][idx.x][0], params.rayRadianceGrad[idx.z][idx.y][idx.x][1], params.rayRadianceGrad[idx.z][idx.y][idx.x][2]);
+    float3 rayRadianceGrad = make_float3(params.rayRadianceGrad[idx.z][idx.y][idx.x][0], params.rayRadianceGrad[idx.z][idx.y][idx.x][1], params.rayRadianceGrad[idx.z][idx.y][idx.x][2]);
+#if EXTENDED_FEATURES_DIM
+    float rayExtendedFeaturesGrad[PipelineParameters::ExtendedFeaturesDim];
+#pragma unroll
+    for (int i = 0; i < PipelineParameters::ExtendedFeaturesDim; i++) {
+        rayExtendedFeaturesGrad[i] = params.rayExtendedFeaturesGrad[idx.z][idx.y][idx.x][i];
+    }
+    float* rayExtendedFeaturesGradPtr = rayExtendedFeaturesGrad;
+#else
+    float* rayExtendedFeaturesGradPtr = nullptr;
+#endif
     float rayTransmittanceGrad = -1.0f * params.rayDensityGrad[idx.z][idx.y][idx.x][0];
     float rayHitDistanceGrad   = params.rayHitDistanceGrad[idx.z][idx.y][idx.x][0];
 
@@ -125,6 +147,16 @@ extern "C" __global__ void __raygen__rg() {
     const float endT = fminf(rayMaxHitDistance, minMaxT.y) + epsT;
 
     float3 rayRadiance     = make_float3(0.f);
+#if EXTENDED_FEATURES_DIM
+    float rayExtendedFeatures[PipelineParameters::ExtendedFeaturesDim];
+#pragma unroll
+    for (int i = 0; i < PipelineParameters::ExtendedFeaturesDim; i++) {
+        rayExtendedFeatures[i] = 0.f;
+    }
+    float* rayExtendedFeaturesPtr = rayExtendedFeatures;
+#else
+    float* rayExtendedFeaturesPtr = nullptr;
+#endif
     float rayTransmittance = 1.f;
     float rayHitDistance   = 0.f;
 
@@ -141,7 +173,9 @@ extern "C" __global__ void __raygen__rg() {
             const RayHit rayHit = rayPayload[i];
 
             if (rayHit.particleId != RayHit::InvalidParticleId) {
-                processHitBwd<PipelineParameters::ParticleKernelDegree, PipelineParameters::SurfelPrimitive>(
+                processHitBwd<PipelineParameters::ParticleKernelType, 
+                              PipelineParameters::ExtendedFeaturesDim, 
+                              PipelineParameters::SurfelPrimitive>(
                     rayOrigin,
                     rayDirection,
                     rayHit.particleId,
@@ -149,6 +183,8 @@ extern "C" __global__ void __raygen__rg() {
                     params.particleDensityGrad,
                     params.particleRadiance,
                     params.particleRadianceGrad,
+                    params.particleExtendedFeatures,
+                    params.particleExtendedFeaturesGrad,
                     params.hitMinGaussianResponse,
                     params.alphaMinThreshold,
                     params.minTransmittance,
@@ -159,6 +195,9 @@ extern "C" __global__ void __raygen__rg() {
                     rayIntegratedRadiance,
                     rayRadiance,
                     rayRadianceGrad,
+                    rayIntegratedExtendedFeaturesPtr,
+                    rayExtendedFeaturesPtr,
+                    rayExtendedFeaturesGradPtr,
                     rayIntegratedHitDistance,
                     rayHitDistance,
                     rayHitDistanceGrad);

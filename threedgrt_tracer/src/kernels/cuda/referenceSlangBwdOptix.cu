@@ -116,6 +116,13 @@ extern "C" __global__ void __raygen__rg() {
 #ifdef ENABLE_NORMALS
     float3 rayNormal = make_float3(params.rayNormal[idx.z][idx.y][idx.x][0], params.rayNormal[idx.z][idx.y][idx.x][1], params.rayNormal[idx.z][idx.y][idx.x][2]);
 #endif
+#if EXTENDED_FEATURES_DIM
+    FixedArray<float, PipelineParameters::ExtendedFeaturesDim> rayExtendedFeatures;
+#pragma unroll
+    for (int i = 0; i < PipelineParameters::ExtendedFeaturesDim; i++) {
+        rayExtendedFeatures[i] = params.rayExtendedFeatures[idx.z][idx.y][idx.x][i];
+    }
+#endif
 
     float rayMaxHitDistance = params.rayHitDistance[idx.z][idx.y][idx.x][1];
 
@@ -124,6 +131,13 @@ extern "C" __global__ void __raygen__rg() {
     float rayHitDistanceGrad   = params.rayHitDistanceGrad[idx.z][idx.y][idx.x][0];
 #ifdef ENABLE_NORMALS
     float3 rayNormalGrad = make_float3(params.rayNormalGrad[idx.z][idx.y][idx.x][0], params.rayNormalGrad[idx.z][idx.y][idx.x][1], params.rayNormalGrad[idx.z][idx.y][idx.x][2]);
+#endif
+#if EXTENDED_FEATURES_DIM
+    FixedArray<float, PipelineParameters::ExtendedFeaturesDim> rayExtendedFeaturesGrad;
+#pragma unroll
+    for (int i = 0; i < PipelineParameters::ExtendedFeaturesDim; i++) {
+        rayExtendedFeaturesGrad[i] = params.rayExtendedFeaturesGrad[idx.z][idx.y][idx.x][i];
+    }
 #endif
 
     constexpr float epsT = 1e-9;
@@ -169,6 +183,16 @@ extern "C" __global__ void __raygen__rg() {
                         rayDirection);
 
                     float hitAlphaGrad = 0.f;
+
+#if EXTENDED_FEATURES_DIM
+                    particleExtendedFeaturesIntegrateBwdToBuffer(hitAlpha,
+                                                                 &hitAlphaGrad,
+                                                                 rayHit.particleId,
+                                                                 {(float*)params.particleExtendedFeatures, (float*)params.particleExtendedFeaturesGrad, false},
+                                                                 &rayExtendedFeatures,
+                                                                 &rayExtendedFeaturesGrad);
+#endif
+
                     particleFeaturesIntegrateBwdToBuffer(rayDirection,
                                                          hitAlpha,
                                                          &hitAlphaGrad,

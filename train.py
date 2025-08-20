@@ -20,6 +20,7 @@ from threedgrut.utils.logger import logger
 from threedgrut.utils.timer import timing_options
 
 OmegaConf.register_new_resolver("int_list", lambda l: [int(x) for x in l])
+OmegaConf.register_new_resolver("gt", lambda x, y: int(x) > int(y))
 
 # # Uncomment the following lines to enable debug timing
 # timing_options.active = True

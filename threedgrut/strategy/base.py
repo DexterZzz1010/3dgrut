@@ -67,7 +67,7 @@ class BaseStrategy:
         """
         for i, param_group in enumerate(self.model.optimizer.param_groups):
             name = param_group["name"]
-            if (names is None) or (name in names):
+            if ((names is None) or (name in names)) and (name != "extended_features_linear"):
                 p = param_group["params"][0]
                 p_state = self.model.optimizer.state[p]
                 del self.model.optimizer.state[p]

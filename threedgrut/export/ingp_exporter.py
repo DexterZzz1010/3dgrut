@@ -71,6 +71,12 @@ class INGPExporter(ModelExporter):
         mogt_config["mog_features"] = (
             features.flatten().to(dtype=export_dtype, device="cpu").detach().numpy().tobytes()
         )
+        mogt_config["mog_kernel_parameters"] = (
+            model.get_kernel_parameters().flatten().to(dtype=export_dtype, device="cpu").detach().numpy().tobytes()
+        )
+        mogt_config["mog_extended_features"] = (
+            model.get_extended_features().flatten().to(dtype=export_dtype, device="cpu").detach().numpy().tobytes()
+        )
         with gzip.open(output_path, "wb") as f:
             packed = msgpack.packb(mogt_config)
             f.write(packed)

@@ -44,6 +44,10 @@ class PLYExporter(ModelExporter):
             l.append('scale_{}'.format(i))
         for i in range(rotation.shape[1]):
             l.append('rot_{}'.format(i))
+        for i in range(extended_features.shape[1]):
+            l.append('f_ext_{}'.format(i))
+        for i in range(self.kernel_parameters.shape[1]):
+            l.append('kernel_parameter_{}'.format(i))
         return l
 
     @torch.no_grad()
@@ -74,13 +78,18 @@ class PLYExporter(ModelExporter):
             preactivation=True).detach().cpu().numpy()
         mogt_rotation = model.get_rotation(
             preactivation=True).detach().cpu().numpy()
+        mogt_extended_features = model.get_extended_features(
+            preactivation=True).detach().cpu().numpy()
+        mogt_kernel_parameters = model.get_kernel_parameters(
+            preactivation=True).detach().cpu().numpy()
 
         dtype_full = [(attribute, 'f4') for attribute in PLYExporter._construct_list_of_attributes(
             mogt_albedo, mogt_specular, mogt_scales, mogt_rotation)]
 
         elements = np.empty(num_gaussians, dtype=dtype_full)
         attributes = np.concatenate((positions, mogt_nrm, mogt_albedo,
-                                    mogt_specular, mogt_densities, mogt_scales, mogt_rotation), axis=1)
+                                    mogt_specular, mogt_extended_features, mogt_densities, 
+                                    mogt_scales, mogt_rotation, mogt_kernel_parameters), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(output_path)

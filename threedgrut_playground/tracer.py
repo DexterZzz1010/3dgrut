@@ -66,7 +66,7 @@ class Tracer:
             self.conf.render.pipeline_type,
             self.conf.render.backward_pipeline_type,
             self.conf.render.primitive_type,
-            self.conf.render.particle_kernel_degree,
+            self.conf.render.particle_kernel_type,
             self.conf.render.particle_kernel_min_response,
             self.conf.render.particle_kernel_density_clamping,
             self.conf.render.particle_radiance_sph_degree,
@@ -89,6 +89,7 @@ class Tracer:
                 gaussians.rotation_activation(gaussians.rotation).view(-1, 4).contiguous(),
                 gaussians.scale_activation(gaussians.scale).view(-1, 3).contiguous(),
                 gaussians.density_activation(gaussians.density).view(-1, 1).contiguous(),
+                gaussians.kernel_parameters_activation(gaussians.kernel_parameters).view(-1, 1).contiguous(),
                 rebuild_bvh,
                 allow_bvh_update
             )
@@ -139,6 +140,7 @@ class Tracer:
                 gpu_batch['rays_d_cam'].contiguous(),
                 particle_density,
                 features.contiguous(),
+                gaussians.get_extended_features().contiguous(),
                 gaussians.n_active_features,
                 self.conf.render.min_transmittance,
             )

@@ -23,15 +23,16 @@ class ScannetppDataset(ColmapDataset):
 
     def __init__(
         self,
-        path,
+        config,
         device="cuda",
         split="train",
-        downsample_factor=1,
-        test_split_interval=8,
         ray_jitter=None,
     ):
         super(ScannetppDataset, self).__init__(
-            path, device, split, downsample_factor, test_split_interval, ray_jitter
+            config,
+            device=device,
+            split=split,
+            ray_jitter=ray_jitter
         )
 
     def load_intrinsics_and_extrinsics(self):

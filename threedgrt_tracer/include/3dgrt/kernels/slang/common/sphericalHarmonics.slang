@@ -18,8 +18,34 @@ module sphericalHarmonics;
 namespace sphericalHarmonics
 {
 
+[BackwardDifferentiable] [ForceInline]
+vector<float, Dim> shLogistic<let Dim : int>(in vector<float, Dim> x)
+{
+    return 1.0 / (1.0 + exp(-5.f*x));
+}
+
+[BackwardDifferentiable] [ForceInline]
+float shExpLu<let Dim : int>(in float x)
+{
+    const float SHRadMinBound = 0.001f;
+    const float LogSHRadMinBoundMinus1 = -7.907755278982137f; //< logf(SHRadMinBound)-1; -> non constexpr
+    return x > SHRadMinBound ? x : exp(x / SHRadMinBound + LogSHRadMinBoundMinus1);
+}
+
+[BackwardDifferentiable] [ForceInline]
+vector<float, Dim> shExpLuVec<let Dim : int>(in vector<float, Dim> x)
+{
+    vector<float, Dim> y;
+    [ForceUnroll]
+    for (int i = 0; i < Dim; i++)
+    {
+        y[i] = shExpLu<Dim>(x[i]+0.5f);
+    }
+    return y;
+}
+
 [BackwardDifferentiable]
-vector<float, Dim> decode<let Dim : int, let MaxNumCoefficients : int>(
+inline vector<float, Dim> decode<let Dim : int, let MaxNumCoefficients : int>(
     no_diff in int degree,
     in vector<float, Dim> coefficients[MaxNumCoefficients], 
     in float3 direction)

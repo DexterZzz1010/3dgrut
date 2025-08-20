@@ -15,7 +15,7 @@
 
 #include <3dgrt/kernels/slang/common/transforms.slang>
 namespace gaussianParticle {
-static const int KernelDegree               = GAUSSIAN_PARTICLE_KERNEL_DEGREE;
+static const int KernelType               = GAUSSIAN_PARTICLE_KERNEL_TYPE;
 static const float MinParticleKernelDensity = GAUSSIAN_PARTICLE_MIN_KERNEL_DENSITY;
 static const float MinParticleAlpha = GAUSSIAN_PARTICLE_MIN_ALPHA;
 static const float MaxParticleAlpha = GAUSSIAN_PARTICLE_MAX_ALPHA;
@@ -24,12 +24,24 @@ static const bool Surfel                    = false; // GAUSSIAN_PARTICLE_SURFEL
 
 namespace gaussianParticle {
 
+enum TKernelType {
+    Linear = 0,
+    Laplacian = 1,
+    Quadratic = 2,
+    Cubic = 3,
+    Tesseractic = 4,
+    Quintic = 5,
+    Zenzizenzizenzic = 8,
+    GeneralizedGaussian = 9,
+    Beta = 10,
+};
+
 struct RawParameters : IDifferentiable {
     float3 position;
     float density;
     float4 quaternion;
     float3 scale;
-    float padding;
+    float shape;
 };
 
 struct RawParametersBuffer {
@@ -57,6 +69,7 @@ struct CommonParameters {
     no_diff RawParametersBuffer parametersBuffer,
     RawParameters rawParameters) {
     if (parametersBuffer.exclusiveGradient) {
+        parametersBuffer._gradPtr[particleIdx].shape += rawParameters.shape;
         parametersBuffer._gradPtr[particleIdx].density += rawParameters.density;
         parametersBuffer._gradPtr[particleIdx].position += rawParameters.position;
         parametersBuffer._gradPtr[particleIdx].quaternion += rawParameters.quaternion;
@@ -66,6 +79,7 @@ struct CommonParameters {
             parametersBuffer._gradPtr[particleIdx].scale.xy += rawParameters.scale.xy;
         }
     } else {
+        InterlockedAdd(parametersBuffer._gradPtr[particleIdx].shape, rawParameters.shape);
         InterlockedAdd(parametersBuffer._gradPtr[particleIdx].density, rawParameters.density);
         InterlockedAdd(parametersBuffer._gradPtr[particleIdx].position.x, rawParameters.position.x);
         InterlockedAdd(parametersBuffer._gradPtr[particleIdx].position.y, rawParameters.position.y);
@@ -88,6 +102,7 @@ struct Parameters : IDifferentiable {
     float3 scale;
     float3x3 rotationT;
     float density;
+    float shape;
 };
 
 [BackwardDifferentiable][ForceInline] Parameters fetchParameters(
@@ -98,7 +113,8 @@ struct Parameters : IDifferentiable {
         rawParameters.position,
         rawParameters.scale,
         transforms.rotationMatrixTranspose(rawParameters.quaternion),
-        rawParameters.density};
+        rawParameters.density,
+        rawParameters.shape};
 }
 [BackwardDifferentiable][ForceInline] void cannonicalRay(
     in float3 rayOrigin,
@@ -123,50 +139,65 @@ struct Parameters : IDifferentiable {
     return dot(gcrod, gcrod);
 }
 
-[BackwardDifferentiable][ForceInline] float canonicalRayMaxKernelResponse<let KernelDegree : int>(
+[BackwardDifferentiable][ForceInline] float canonicalRayMaxKernelResponse<let KernelType : int>(
     float3 canonicalRayOrigin,
-    float3 canonicalRayDirection) {
+    float3 canonicalRayDirection,
+    float kernelShapeParameter) {
     const float grayDist = canonicalRayMinSquaredDistance(canonicalRayOrigin, canonicalRayDirection);
 
     /// generalized gaussian of degree n : scaling is s = -4.5/3^n
-    switch (KernelDegree) {
-    case 8: // Zenzizenzizenzic
+    switch (KernelType) {
+    case TKernelType.Zenzizenzizenzic: 
     {
         /*static const*/ float s = -0.000685871056241;
         const float grayDistSq   = grayDist * grayDist;
         return exp(s * grayDistSq * grayDistSq);
     }
-    case 5: // Quintic
+    case TKernelType.Quintic: 
     {
         /*static const*/ float s = -0.0185185185185;
         return exp(s * grayDist * grayDist * sqrt(grayDist));
     }
-    case 4: // Tesseractic
+    case TKernelType.Tesseractic:
     {
         /*static const*/ float s = -0.0555555555556;
         return exp(s * grayDist * grayDist);
     }
-    case 3: // Cubic
+    case TKernelType.Cubic:
     {
         /*static const*/ float s = -0.166666666667;
         return exp(s * grayDist * sqrt(grayDist));
     }
-    case 1: // Laplacian
+    case TKernelType.Laplacian: 
     {
         /*static const*/ float s = -1.5f;
         return exp(s * sqrt(grayDist));
     }
-    case 0: // Linear
+    case TKernelType.Linear:
     {
         /* static const */ float s = -0.329630334487;
         return max(1 + s * sqrt(grayDist), 0.f);
     }
-    default: // Quadratic
+    case TKernelType.Quadratic:
     {
         /*static const*/ float s = -0.5f;
         return exp(s * grayDist);
     }
+    case TKernelType.GeneralizedGaussian:
+    {
+        float s = -4.5/pow(3.0f, 2.0f*kernelShapeParameter);
+        return exp(s * pow(grayDist, kernelShapeParameter));
     }
+    case TKernelType.Beta:
+    {
+        return grayDist < 9.0 ? pow(1 - grayDist/9.0, kernelShapeParameter) : 0.0f;
+    }
+    default:
+    {
+        static_assert(false, "Invalid kernel type");
+    }
+    }
+    return 0.f;
 }
 
 [BackwardDifferentiable][ForceInline] float canonicalRayDistance(
@@ -211,9 +242,10 @@ bool hit(
         canonicalRayOrigin,
         canonicalRayDirection);
 
-    const float maxResponse = canonicalRayMaxKernelResponse<KernelDegree>(
+    const float maxResponse = canonicalRayMaxKernelResponse<KernelType>(
         canonicalRayOrigin,
-        canonicalRayDirection);
+        canonicalRayDirection,
+        parameters.shape);
 
     alpha = min(MaxParticleAlpha, maxResponse * parameters.density); // needed for the stability of the backward pass
     const bool acceptHit = ((maxResponse > MinParticleKernelDensity) && (alpha > MinParticleAlpha));
@@ -480,9 +512,10 @@ bool particleDensityHitCustom(
         canonicalRayOrigin,
         canonicalRayDirection);
 
-    const float maxResponse = gaussianParticle.canonicalRayMaxKernelResponse<gaussianParticle.KernelDegree>(
+    const float maxResponse = gaussianParticle.canonicalRayMaxKernelResponse<gaussianParticle.KernelType>(
         canonicalRayOrigin,
-        canonicalRayDirection);
+        canonicalRayDirection,
+        parameters.shape);
 
     // distance to the gaussian center projection on the ray
     hitDistance = gaussianParticle.canonicalRayDistance(canonicalRayOrigin, canonicalRayDirection, parameters.scale);

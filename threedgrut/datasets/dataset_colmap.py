@@ -45,24 +45,28 @@ from .camera_models import (
     image_points_to_camera_rays,
     pixels_to_image_points,
 )
+from .features_dataset import FeatureDataset
 
 
-class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
+class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, FeatureDataset):
     def __init__(
         self,
-        path,
+        config,
         device="cuda",
         split="train",
-        downsample_factor=1,
-        test_split_interval=8,
         ray_jitter=None,
     ):
-        self.path = path
+        # Initialize Dataset
+        Dataset.__init__(self)
+        # Initialize FeatureDataset
+        FeatureDataset.__init__(self, config)
+
+        self.path = config.path
         self.device = device
         self.split = split
-        self.downsample_factor = downsample_factor
+        self.downsample_factor = config.dataset.downsample_factor
         self.ray_jitter = ray_jitter
-        self.test_split_interval = test_split_interval
+        self.test_split_interval = config.dataset.test_split_interval
 
         # Worker-based GPU cache for multiprocessing compatibility
         self._worker_gpu_cache = {}
@@ -373,6 +377,10 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
             "intr": self.get_intrinsics_idx(idx),
         }
 
+        features_gt = self.load_features(self.image_paths[idx])
+        if features_gt is not None:
+            output_dict["features_gt"] = features_gt
+
         # Only add mask to dictionary if it exists
         if os.path.exists(mask_path := self.mask_paths[idx]):
             mask = torch.from_numpy(
@@ -381,11 +389,21 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
             output_dict["mask"] = mask
 
         return output_dict
+    
+    def add_features(self, idx: int, feature: torch.Tensor):
+        """Add a feature to the feature dataset.
+        
+        Args:
+            idx: The index of the feature
+            feature: The feature to save
+        """
+        self.save_features(self.image_paths[idx], feature)
 
     def get_gpu_batch_with_intrinsics(self, batch):
         """Add the intrinsics to the batch and move data to GPU."""
 
         data = batch["data"][0].to(self.device, non_blocking=True) / 255.0
+        features_gt = batch["features_gt"][0].to(self.device, non_blocking=True) if "features_gt" in batch else None
         pose = batch["pose"][0].to(self.device, non_blocking=True)
         intr = batch["intr"][0].item()
 
@@ -399,6 +417,7 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
 
         sample = {
             "rgb_gt": data,
+            "features_gt": features_gt,
             "rays_ori": rays_ori,
             "rays_dir": rays_dir,
             "T_to_world": pose,

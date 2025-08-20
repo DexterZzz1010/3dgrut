@@ -17,14 +17,14 @@
 
 #include <3dgut/kernels/cuda/common/rayPayload.cuh>
 
-template <int FeatN>
-struct RayPayloadBackward : public RayPayload<FeatN> {
+template <int BaseFeatN = 3, int ExtFeatN = 0>
+struct RayPayloadBackward : public RayPayload<BaseFeatN, ExtFeatN> {
     float transmittanceBackward;
     float transmittanceGradient;
     float hitTBackward;
     float hitTGradient;
-    tcnn::vec<FeatN> featuresBackward;
-    tcnn::vec<FeatN> featuresGradient;
+    tcnn::vec<BaseFeatN + ExtFeatN> featuresGradient;
+    tcnn::vec<BaseFeatN + ExtFeatN> featuresBackward;
 };
 
 template <typename RayPayloadT>
@@ -33,8 +33,10 @@ __device__ __inline__ RayPayloadT initializeBackwardRay(const threedgut::RenderP
                                                         const tcnn::vec3* __restrict__ sensorRayDirectionPtr,
                                                         const float* __restrict__ worldHitDistancePtr,
                                                         const float* __restrict__ worldHitDistanceGradientPtr,
-                                                        const tcnn::vec<RayPayloadT::FeatDim + 1>* __restrict__ featuresDensityPtr,
-                                                        const tcnn::vec<RayPayloadT::FeatDim + 1>* __restrict__ featuresDensityGradientPtr,
+                                                        const tcnn::vec<RayPayloadT::BaseFeatDim + 1>* __restrict__ featuresDensityPtr,
+                                                        const tcnn::vec<RayPayloadT::BaseFeatDim + 1>* __restrict__ featuresDensityGradientPtr,
+                                                        const float* __restrict__ extendedFeaturesPtr,
+                                                        const float* __restrict__ extendedFeaturesGradientPtr,
                                                         const tcnn::mat4x3& sensorToWorldTransform) {
 
     // NB : no backpropagation through the forward ray initialization / finalization
@@ -44,14 +46,20 @@ __device__ __inline__ RayPayloadT initializeBackwardRay(const threedgut::RenderP
                                                  sensorToWorldTransform);
 
     if (ray.isAlive()) {
-        const tcnn::vec<RayPayloadT::FeatDim + 1> featuresDensity         = featuresDensityPtr[ray.idx];
-        const tcnn::vec<RayPayloadT::FeatDim + 1> featuresDensityGradient = featuresDensityGradientPtr[ray.idx];
-        ray.transmittanceBackward                                         = 1.f - featuresDensity[RayPayloadT::FeatDim];
-        ray.transmittanceGradient                                         = -1.f * featuresDensityGradient[RayPayloadT::FeatDim];
-        ray.hitTBackward                                                  = worldHitDistancePtr[ray.idx];
-        ray.hitTGradient                                                  = worldHitDistanceGradientPtr[ray.idx];
-        ray.featuresBackward                                              = threedgut::sliceVec<0, RayPayloadT::FeatDim>(featuresDensity);
-        ray.featuresGradient                                              = threedgut::sliceVec<0, RayPayloadT::FeatDim>(featuresDensityGradient);
+        const tcnn::vec<RayPayloadT::FeatDim + 1> featuresDensity              = featuresDensityPtr[ray.idx];
+        const tcnn::vec<RayPayloadT::FeatDim + 1> featuresDensityGradient      = featuresDensityGradientPtr[ray.idx];
+        ray.transmittanceBackward                                              = 1.f - featuresDensity[RayPayloadT::FeatDim];
+        ray.transmittanceGradient                                              = -1.f * featuresDensityGradient[RayPayloadT::FeatDim];
+        ray.hitTBackward                                                       = worldHitDistancePtr[ray.idx];
+        ray.hitTGradient                                                       = worldHitDistanceGradientPtr[ray.idx];
+        threedgut::sliceVec<0, RayPayloadT::BaseFeatDim>(ray.featuresBackward) = threedgut::sliceVec<0, RayPayloadT::BaseFeatDim>(featuresDensity);
+        threedgut::sliceVec<0, RayPayloadT::BaseFeatDim>(ray.featuresGradient) = threedgut::sliceVec<0, RayPayloadT::BaseFeatDim>(featuresDensityGradient);
+        if constexpr (RayPayloadT::ExtFeatDim > 0) {
+            threedgut::sliceVec<RayPayloadT::BaseFeatDim, RayPayloadT::ExtFeatDim>(ray.featuresBackward) =
+                reinterpret_cast<const tcnn::vec<RayPayloadT::ExtFeatDim>*>(extendedFeaturesPtr)[ray.idx];
+            threedgut::sliceVec<RayPayloadT::BaseFeatDim, RayPayloadT::ExtFeatDim>(ray.featuresGradient) =
+                reinterpret_cast<const tcnn::vec<RayPayloadT::ExtFeatDim>*>(extendedFeaturesGradientPtr)[ray.idx];
+        }
     }
 
     return ray;

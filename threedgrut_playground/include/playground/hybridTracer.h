@@ -109,7 +109,7 @@ public:
         const std::string& pipeline,
         const std::string& backwardPipeline,
         const std::string& primitive,
-        float particleKernelDegree,
+        int particleKernelType,
         float particleKernelMinResponse,
         bool particleKernelDensityClamping,
         int particleRadianceSphDegree,

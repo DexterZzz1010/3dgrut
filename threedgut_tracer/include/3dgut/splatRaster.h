@@ -48,11 +48,12 @@ public:
 
     ~SplatRaster();
 
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
     trace(uint32_t frameNumber, int numActiveFeatures,
           // Particles
           torch::Tensor particleDensity,
           torch::Tensor particleRadiance,
+          torch::Tensor particleExtendedFeatures,
           // Rays
           torch::Tensor rayOrigin,
           torch::Tensor rayDirection,
@@ -64,11 +65,12 @@ public:
           torch::Tensor sensorsStartPose,
           torch::Tensor sensorsEndPose);
 
-    std::tuple<torch::Tensor, torch::Tensor>
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
     traceBwd(uint32_t frameNumber, int numActiveFeatures,
              // Particles
              torch::Tensor particleDensity,
              torch::Tensor particleRadiance,
+             torch::Tensor particleExtendedFeatures,
              // Rays
              torch::Tensor rayOrigin,
              torch::Tensor rayDirection,
@@ -83,7 +85,9 @@ public:
              torch::Tensor rayRadianceDensity,
              torch::Tensor rayRadianceDensityGradient,
              torch::Tensor rayHitDistance,
-             torch::Tensor rayHitDistanceGradient);
+             torch::Tensor rayHitDistanceGradient,
+             torch::Tensor rayExtendedFeatures,
+             torch::Tensor rayExtendedFeaturesGradient);
 
     std::map<std::string, float>
     collectTimes();

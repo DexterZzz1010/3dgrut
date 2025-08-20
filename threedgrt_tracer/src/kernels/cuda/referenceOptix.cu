@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// clang-format off
 #include <3dgrt/pipelineParameters.h>
 #include <3dgrt/kernels/cuda/gaussianParticles.cuh>
 // clang-format on
@@ -111,7 +112,17 @@ extern "C" __global__ void __raygen__rg() {
 
     float3 rayRadiance     = make_float3(0.0f);
     float rayTransmittance = 1.0f;
-    float rayHitDistance   = 0.f;
+#if EXTENDED_FEATURES_DIM
+    float rayExtendedFeatures[PipelineParameters::ExtendedFeaturesDim];
+    float* rayExtendedFeaturesPtr = rayExtendedFeatures;
+#pragma unroll
+    for (int i = 0; i < PipelineParameters::ExtendedFeaturesDim; i++) {
+        rayExtendedFeaturesPtr[i] = 0.f;
+    }
+#else
+    float* rayExtendedFeaturesPtr = nullptr;
+#endif
+    float rayHitDistance = 0.f;
 #ifdef ENABLE_NORMALS
     float3 rayNormal = make_float3(0.f);
 #endif
@@ -136,17 +147,21 @@ extern "C" __global__ void __raygen__rg() {
             const RayHit rayHit = rayPayload[i];
 
             if ((rayHit.particleId != RayHit::InvalidParticleId) && (rayTransmittance > params.minTransmittance)) {
-                const bool acceptedHit = processHit<PipelineParameters::ParticleKernelDegree, PipelineParameters::SurfelPrimitive>(
+                const bool acceptedHit = processHit<PipelineParameters::ParticleKernelType,
+                                                    PipelineParameters::ExtendedFeaturesDim,
+                                                    PipelineParameters::SurfelPrimitive>(
                     rayOrigin,
                     rayDirection,
                     rayHit.particleId,
                     params.particleDensity,
                     params.particleRadiance,
+                    params.particleExtendedFeatures,
                     params.hitMinGaussianResponse,
                     params.alphaMinThreshold,
                     params.sphDegree,
                     &rayTransmittance,
                     &rayRadiance,
+                    rayExtendedFeaturesPtr,
                     &rayHitDistance,
 #ifdef ENABLE_NORMALS
                     &rayNormal
@@ -169,9 +184,13 @@ extern "C" __global__ void __raygen__rg() {
         }
     }
 
-    params.rayRadiance[idx.z][idx.y][idx.x][0]    = rayRadiance.x;
-    params.rayRadiance[idx.z][idx.y][idx.x][1]    = rayRadiance.y;
-    params.rayRadiance[idx.z][idx.y][idx.x][2]    = rayRadiance.z;
+    params.rayRadiance[idx.z][idx.y][idx.x][0] = rayRadiance.x;
+    params.rayRadiance[idx.z][idx.y][idx.x][1] = rayRadiance.y;
+    params.rayRadiance[idx.z][idx.y][idx.x][2] = rayRadiance.z;
+#pragma unroll
+    for (int i = 0; i < PipelineParameters::ExtendedFeaturesDim; i++) {
+        params.rayExtendedFeatures[idx.z][idx.y][idx.x][i] = rayExtendedFeaturesPtr[i];
+    }
     params.rayDensity[idx.z][idx.y][idx.x][0]     = 1 - rayTransmittance;
     params.rayHitDistance[idx.z][idx.y][idx.x][0] = rayHitDistance;
     params.rayHitDistance[idx.z][idx.y][idx.x][1] = rayLastHitDistance;

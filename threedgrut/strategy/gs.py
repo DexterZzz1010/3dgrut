@@ -159,6 +159,8 @@ class GSStrategy(BaseStrategy):
                     self.model.scale_activation(param[mask].repeat(repeats))
                     / (0.8 * self.split_n_gaussians)
                 )
+            elif name == "extended_features_linear":
+                return param
             else:
                 p_split = param[mask].repeat(repeats)
 
@@ -193,6 +195,8 @@ class GSStrategy(BaseStrategy):
             logger.info(f"Cloned {n_clone} / {n_before} ({n_clone/n_before*100:.2f}%) gaussians")
 
         def update_param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
+            if name == "extended_features_linear":
+                return param
             param_new = torch.cat([param, param[mask]])
             return torch.nn.Parameter(param_new, requires_grad=param.requires_grad)
 
@@ -251,6 +255,8 @@ class GSStrategy(BaseStrategy):
             logger.info(f"Density-pruned {n_prune} / {n_before} ({n_prune/n_before*100:.2f}%) gaussians")
 
         def update_param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
+            if name == "extended_features_linear":
+                return param
             return torch.nn.Parameter(param[mask], requires_grad=param.requires_grad)
 
         def update_optimizer_fn(key: str, v: torch.Tensor) -> torch.Tensor:

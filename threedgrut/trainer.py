@@ -416,8 +416,34 @@ class Trainer3DGRUT:
         lambda_l2 = 0.0
         if self.conf.loss.use_l2:
             with torch.cuda.nvtx.range(f"loss-l2"):
-                loss_l2 = torch.nn.functional.mse_loss(outputs["pred_rgb"], rgb_gt)
+                loss_l2 = torch.nn.functional.mse_loss(rgb_pred, rgb_gt)
                 lambda_l2 = self.conf.loss.lambda_l2
+
+        # Extended features loss
+        loss_extended_features = torch.zeros(1, device=self.device)
+        lambda_extended_features = 0.0
+        if self.conf.loss.use_extended_features:
+            assert gpu_batch.features_gt is not None, "missing features_gt in gpu_batch"
+            assert "pred_extended_features" in outputs,  "missing extended_features in outputs"
+            with torch.cuda.nvtx.range(f"loss-extended-features"):
+                extended_features_gt = gpu_batch.features_gt
+                pred_extended_features = outputs["pred_extended_features"]
+                n_extended_features = min(pred_extended_features.shape[-1], extended_features_gt.shape[-1])
+                pred_extended_features = pred_extended_features[..., -n_extended_features:]
+                extended_features_gt = extended_features_gt[..., -n_extended_features:]
+                if mask is not None:
+                    extended_features_gt = extended_features_gt * mask
+                    pred_extended_features = pred_extended_features * mask
+                # Resize predicted features to match ground truth size if needed
+                if pred_extended_features.shape != extended_features_gt.shape:
+                    pred_extended_features = torch.nn.functional.interpolate(
+                        pred_extended_features.permute(0, 3, 1, 2),  # [B, C, H, W]
+                        size=extended_features_gt.shape[1:3],
+                        mode='area'
+                    ).permute(0, 2, 3, 1)  # Back to [B, H, W, C]
+                #loss_extended_features = torch.nn.functional.mse_loss(pred_extended_features, extended_features_gt)
+                loss_extended_features = torch.nn.functional.l1_loss(pred_extended_features, extended_features_gt)
+                lambda_extended_features = self.conf.loss.lambda_extended_features
 
         # DSSIM loss
         loss_ssim = torch.zeros(1, device=self.device)
@@ -446,8 +472,8 @@ class Trainer3DGRUT:
                 lambda_scale = self.conf.loss.lambda_scale
 
         # Total loss
-        loss = lambda_l1 * loss_l1 + lambda_ssim * loss_ssim + lambda_opacity * loss_opacity + lambda_scale * loss_scale
-        return dict(total_loss=loss, l1_loss=lambda_l1 * loss_l1, l2_loss=lambda_l2 * loss_l2, ssim_loss=lambda_ssim * loss_ssim, opacity_loss=lambda_opacity * loss_opacity, scale_loss=lambda_scale * loss_scale)
+        loss = lambda_l1 * loss_l1 + lambda_l2 * loss_l2 + lambda_ssim * loss_ssim + lambda_opacity * loss_opacity + lambda_scale * loss_scale + lambda_extended_features * loss_extended_features
+        return dict(total_loss=loss, extended_features_loss=lambda_extended_features * loss_extended_features, l1_loss=lambda_l1 * loss_l1, l2_loss=lambda_l2 * loss_l2, ssim_loss=lambda_ssim * loss_ssim, opacity_loss=lambda_opacity * loss_opacity, scale_loss=lambda_scale * loss_scale)
 
     @torch.cuda.nvtx.range("log_validation_iter")
     def log_validation_iter(
@@ -523,6 +549,9 @@ class Trainer3DGRUT:
         if self.conf.loss.use_ssim:
             ssim_loss = np.mean(metrics["losses"]["ssim_loss"])
             writer.add_scalar("loss/ssim/val", ssim_loss, global_step)
+        if self.conf.loss.use_extended_features:
+            extended_features_loss = np.mean(metrics["losses"]["extended_features_loss"])
+            writer.add_scalar("loss/extended_features/val", extended_features_loss, global_step)
 
         table = {k: np.mean(v) for k, v in metrics.items() if k in ("psnr", "ssim", "lpips")}
         for time_key in mean_timings:
@@ -556,6 +585,9 @@ class Trainer3DGRUT:
             if self.conf.loss.use_l2:
                 l2_loss = np.mean(batch_metrics["losses"]["l2_loss"])
                 writer.add_scalar("loss/l2/train", l2_loss, global_step)
+            if self.conf.loss.use_extended_features:
+                extended_features_loss = np.mean(batch_metrics["losses"]["extended_features_loss"])
+                writer.add_scalar("loss/extended_features/train", extended_features_loss, global_step)
             if self.conf.loss.use_ssim:
                 ssim_loss = np.mean(batch_metrics["losses"]["ssim_loss"])
                 writer.add_scalar("loss/ssim/train", ssim_loss, global_step)

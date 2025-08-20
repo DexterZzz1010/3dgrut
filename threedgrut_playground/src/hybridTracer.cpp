@@ -56,17 +56,17 @@ HybridOptixTracer::HybridOptixTracer(
     const std::string& pipeline,
     const std::string& backwardPipeline,
     const std::string& primitive,
-    float particleKernelDegree,
+    int particleKernelType,
     float particleKernelMinResponse,
     bool particleKernelDensityClamping,
     int particleRadianceSphDegree,
     bool enableNormals,
     bool enableHitCounts) : OptixTracer(threedgrtPath, cuda_path, pipeline, backwardPipeline, primitive,
-                                        particleKernelDegree, particleKernelMinResponse, particleKernelDensityClamping,
+                                        particleKernelType, particleKernelMinResponse, particleKernelDensityClamping,
                                         particleRadianceSphDegree, enableNormals, enableHitCounts){
 
     char log[2048]; // For error reporting from OptiX creation functions
-    std::vector<std::string> defines = generateDefines(particleKernelDegree, particleKernelDensityClamping,
+    std::vector<std::string> defines = generateDefines(particleKernelType, particleKernelDensityClamping,
                                                         particleRadianceSphDegree, enableNormals, enableHitCounts);
     const uint32_t sharedFlags =
         (_state->gPrimType == MOGTracingSphere ?

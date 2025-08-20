@@ -48,7 +48,7 @@ Parameters fetchParametersFromBuffer(no_diff uint32_t particleIdx,
 {
     Parameters parameters;
     const uint32_t particleOffset = particleIdx * RadianceMaxNumSphCoefficients;
-    [unroll] for (int i = 0; i < RadianceMaxNumSphCoefficients; ++i) {
+    [ForceUnroll] for (int i = 0; i < RadianceMaxNumSphCoefficients; ++i) {
         parameters.sphCoefficients[i] = parametersBuffer._dataPtr[particleOffset + i];
     }
     return parameters;
@@ -60,14 +60,14 @@ void fetchParametersFromBufferBwd(no_diff uint32_t particleIdx,
                                   Parameters parametersGrad) 
 {
     const uint32_t particleOffset = particleIdx * RadianceMaxNumSphCoefficients;
-    [unroll] for (int i = 0; i < RadianceMaxNumSphCoefficients; ++i) {
+    [ForceUnroll] for (int i = 0; i < RadianceMaxNumSphCoefficients; ++i) {
         const vector<float, Dim> coeffs = parametersGrad.sphCoefficients[i];
         if (parametersBuffer.exclusiveGradient) {
-            [unroll] for (int j = 0; j < Dim; ++j) {
+            [ForceUnroll] for (int j = 0; j < Dim; ++j) {
                 parametersBuffer._gradPtr[particleOffset + i][j] += coeffs[j];
             }
         } else {
-            [unroll] for (int j = 0; j < Dim; ++j) {
+            [ForceUnroll] for (int j = 0; j < Dim; ++j) {
                 InterlockedAdd(parametersBuffer._gradPtr[particleOffset + i][j], coeffs[j]);
             }
         }
@@ -240,7 +240,7 @@ inline void particleFeaturesIntegrateFwd(in float weight,
             integratedFeaturesDiff);
 
         integratedFeaturesGrad = integratedFeaturesDiff.getDifferential();
-        alphaGrad = alphaDiff.getDifferential();
+        alphaGrad += alphaDiff.getDifferential();
     }
 }
 

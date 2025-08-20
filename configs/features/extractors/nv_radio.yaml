@@ -1,0 +1,4 @@
+type: nv_radio
+model_name: radio_v2.5-h  # one of [radio_v1, radio_v2, radio_v2.1, radio_v2.5-h, radio_v2.5-l]
+upscale_factor: 1  # Optional upscaling factor for input images
+device: cuda  # Device to run the model on

@@ -198,14 +198,15 @@ inline MOGPrimitiveTypes primitiveTypeFromStr(const std::string& primitiveTypeSt
 //------------------------------------------------------------------------------
 
 std::vector<std::string> OptixTracer::generateDefines(
-    float particleKernelDegree,
+    int particleKernelType,
     bool particleKernelDensityClamping,
     int particleRadianceSphDegree,
+    int extendedFeaturesDim,
     bool enableNormals,
     bool enableHitCounts) {
     std::vector<std::string> defines;
     if (_state) {
-        defines.emplace_back("-DPARTICLE_KERNEL_DEGREE=" + std::to_string(static_cast<int32_t>(particleKernelDegree)));
+        defines.emplace_back("-DPARTICLE_KERNEL_TYPE=" + std::to_string(particleKernelType));
         if (enableNormals) {
             defines.emplace_back("-DENABLE_NORMALS");
         }
@@ -215,6 +216,7 @@ std::vector<std::string> OptixTracer::generateDefines(
         defines.emplace_back("-DSPH_MAX_NUM_COEFFS=" + std::to_string((_state->particleRadianceSphDegree + 1) * (_state->particleRadianceSphDegree + 1)));
         defines.emplace_back("-DPARTICLE_PRIMITIVE_TYPE=" + std::to_string(_state->gPrimType));
         defines.emplace_back("-DPARTICLE_PRIMITIVE_CLAMPED=" + std::to_string(particleKernelDensityClamping ? 1 : 0));
+        defines.emplace_back("-DEXTENDED_FEATURES_DIM=" + std::to_string(extendedFeaturesDim));
     }
     return defines;
 }
@@ -225,10 +227,11 @@ OptixTracer::OptixTracer(
     const std::string& pipeline,
     const std::string& backwardPipeline,
     const std::string& primitive,
-    float particleKernelDegree,
+    int particleKernelType,
     float particleKernelMinResponse,
     bool particleKernelDensityClamping,
     int particleRadianceSphDegree,
+    int extendedFeaturesDim,
     bool enableNormals,
     bool enableHitCounts) {
 
@@ -255,7 +258,7 @@ OptixTracer::OptixTracer(
     }
 
     _state->particleRadianceSphDegree     = particleRadianceSphDegree;
-    _state->particleKernelDegree          = particleKernelDegree;
+    _state->particleKernelType            = particleKernelType;
     _state->particleKernelMinResponse     = particleKernelMinResponse;
     _state->particleKernelDensityClamping = particleKernelDensityClamping;
     _state->gNum                          = 0;
@@ -265,9 +268,9 @@ OptixTracer::OptixTracer(
     _state->gPrimNumVert                  = 0;
     _state->gPrimNumTri                   = 0;
 
-    std::vector<std::string> defines = generateDefines(particleKernelDegree, particleKernelDensityClamping,
-                                                       particleRadianceSphDegree, enableNormals, enableHitCounts);
-
+    std::vector<std::string> defines = generateDefines(particleKernelType, particleKernelDensityClamping,
+                                                       particleRadianceSphDegree, extendedFeaturesDim, enableNormals, enableHitCounts);
+    
     const uint32_t sharedFlags =
         (_state->gPrimType == MOGTracingSphere ? PipelineFlag_SpherePrim : ((_state->gPrimType == MOGTracingCustom) || (_state->gPrimType == MOGTracingInstances) ? PipelineFlag_HasIS : 0));
 
@@ -579,8 +582,9 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
                            torch::Tensor mogRot,
                            torch::Tensor mogScl,
                            torch::Tensor mogDns,
+                           torch::Tensor gKernelDegree,
                            unsigned int rebuild,
-                           bool allow_update) {
+                           bool allow_update) { 
 
     const uint32_t gNum = mogPos.size(0);
 
@@ -611,9 +615,11 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
         computeGaussianEnclosingAABB(gNum,
                                      getPtr<float3>(mogPos),
                                      getPtr<float4>(mogRot),
-                                     getPtr<float3>(mogScl), getPtr<float>(mogDns),
+                                     getPtr<float3>(mogScl), 
+                                     getPtr<float>(mogDns),
+                                     getPtr<float>(gKernelDegree),
                                      _state->particleKernelMinResponse, primitiveOpts,
-                                     _state->particleKernelDegree,
+                                     _state->particleKernelType,
                                      reinterpret_cast<OptixAabb*>(_state->gPrimAABB),
                                      cudaStream);
     } else if (_state->gPrimType == MOGTracingInstances) {
@@ -635,9 +641,10 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
                                           getPtr<float4>(mogRot),
                                           getPtr<float3>(mogScl),
                                           getPtr<float>(mogDns),
+                                          getPtr<float>(gKernelDegree),
                                           _state->particleKernelMinResponse,
                                           primitiveOpts,
-                                          _state->particleKernelDegree,
+                                          _state->particleKernelType,
                                           ias,
                                           reinterpret_cast<OptixInstance*>(_state->gPrimAABB), cudaStream);
     } else {
@@ -651,9 +658,10 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
                                                 getPtr<float4>(mogRot),
                                                 getPtr<float3>(mogScl),
                                                 getPtr<float>(mogDns),
+                                                getPtr<float>(gKernelDegree),
                                                 _state->particleKernelMinResponse,
                                                 primitiveOpts,
-                                                _state->particleKernelDegree,
+                                                _state->particleKernelType,
                                                 reinterpret_cast<float3*>(_state->gPrimVrt),
                                                 reinterpret_cast<int3*>(_state->gPrimTri), cudaStream);
         } else if (_state->gPrimType == MOGTracingOctraHedron) {
@@ -666,9 +674,10 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
                                                getPtr<float4>(mogRot),
                                                getPtr<float3>(mogScl),
                                                getPtr<float>(mogDns),
+                                               getPtr<float>(gKernelDegree),
                                                _state->particleKernelMinResponse,
                                                primitiveOpts,
-                                               _state->particleKernelDegree,
+                                               _state->particleKernelType,
                                                reinterpret_cast<float3*>(_state->gPrimVrt),
                                                reinterpret_cast<int3*>(_state->gPrimTri),
                                                cudaStream);
@@ -683,9 +692,10 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
                                             getPtr<float4>(mogRot),
                                             getPtr<float3>(mogScl),
                                             getPtr<float>(mogDns),
+                                            getPtr<float>(gKernelDegree),
                                             _state->particleKernelMinResponse,
                                             primitiveOpts,
-                                            _state->particleKernelDegree,
+                                            _state->particleKernelType,
                                             reinterpret_cast<float3*>(_state->gPrimVrt),
                                             reinterpret_cast<int3*>(_state->gPrimTri),
                                             cudaStream);
@@ -701,9 +711,10 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
                                               getPtr<float4>(mogRot),
                                               getPtr<float3>(mogScl),
                                               getPtr<float>(mogDns),
+                                              getPtr<float>(gKernelDegree),
                                               _state->particleKernelMinResponse,
                                               primitiveOpts,
-                                              _state->particleKernelDegree,
+                                              _state->particleKernelType,
                                               reinterpret_cast<float3*>(_state->gPrimVrt),
                                               reinterpret_cast<int3*>(_state->gPrimTri),
                                               reinterpret_cast<float4*>(_state->gPipelineParticleData),
@@ -719,9 +730,10 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
                                                 getPtr<float4>(mogRot),
                                                 getPtr<float3>(mogScl),
                                                 getPtr<float>(mogDns),
+                                                getPtr<float>(gKernelDegree),
                                                 _state->particleKernelMinResponse,
                                                 primitiveOpts,
-                                                _state->particleKernelDegree,
+                                                _state->particleKernelType,
                                                 reinterpret_cast<float3*>(_state->gPrimVrt),
                                                 reinterpret_cast<int3*>(_state->gPrimTri), cudaStream);
         } else if (_state->gPrimType == MOGTracingSphere) {
@@ -734,9 +746,10 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
                                            getPtr<float4>(mogRot),
                                            getPtr<float3>(mogScl),
                                            getPtr<float>(mogDns),
+                                           getPtr<float>(gKernelDegree),
                                            _state->particleKernelMinResponse,
                                            primitiveOpts,
-                                           _state->particleKernelDegree,
+                                           _state->particleKernelType,
                                            reinterpret_cast<float3*>(_state->gPrimVrt),
                                            reinterpret_cast<float*>(_state->gPrimTri), cudaStream);
         } else {
@@ -749,9 +762,10 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
                                             getPtr<float4>(mogRot),
                                             getPtr<float3>(mogScl),
                                             getPtr<float>(mogDns),
+                                            getPtr<float>(gKernelDegree),
                                             _state->particleKernelMinResponse,
                                             primitiveOpts,
-                                            _state->particleKernelDegree,
+                                            _state->particleKernelType,
                                             reinterpret_cast<float3*>(_state->gPrimVrt),
                                             reinterpret_cast<int3*>(_state->gPrimTri), cudaStream);
         }
@@ -850,25 +864,27 @@ void OptixTracer::buildBVH(torch::Tensor mogPos,
     CUDA_CHECK_LAST();
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 OptixTracer::trace(uint32_t frameNumber,
                    torch::Tensor rayToWorld,
                    torch::Tensor rayOri,
                    torch::Tensor rayDir,
                    torch::Tensor particleDensity,
                    torch::Tensor particleRadiance,
+                   torch::Tensor particleExtendedFeatures,
                    uint32_t renderOpts,
                    int sphDegree,
                    float minTransmittance) {
 
-    const torch::TensorOptions opts = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
-    torch::Tensor rayRad            = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 3}, opts);
-    torch::Tensor rayDns            = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 1}, opts);
-    torch::Tensor rayHit            = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 2}, opts);
-    torch::Tensor rayNrm            = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 3}, opts);
-    torch::Tensor rayHitsCount      = torch::zeros({rayOri.size(0), rayOri.size(1), rayOri.size(2), 1}, opts);
-    torch::Tensor particleVisibility = torch::zeros({particleDensity.size(0), 1}, opts);
-    
+    const torch::TensorOptions opts   = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+    torch::Tensor rayRad              = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 3}, opts);
+    torch::Tensor rayDns              = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 1}, opts);
+    torch::Tensor rayHit              = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 2}, opts);
+    torch::Tensor rayNrm              = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), 3}, opts);
+    torch::Tensor rayExtendedFeatures = torch::empty({rayOri.size(0), rayOri.size(1), rayOri.size(2), particleExtendedFeatures.size(1)}, opts);
+    torch::Tensor rayHitsCount        = torch::zeros({rayOri.size(0), rayOri.size(1), rayOri.size(2), 1}, opts);
+    torch::Tensor particleVisibility  = torch::zeros({particleDensity.size(0), 1}, opts);
+
     PipelineParameters paramsHost;
     paramsHost.handle = _state->gasHandle;
     paramsHost.aabb   = _state->gasAABB;
@@ -887,16 +903,18 @@ OptixTracer::trace(uint32_t frameNumber,
     paramsHost.rayOrigin    = packed_accessor32<float, 4>(rayOri);
     paramsHost.rayDirection = packed_accessor32<float, 4>(rayDir);
 
-    paramsHost.particleDensity      = getPtr<const ParticleDensity>(particleDensity);
-    paramsHost.particleRadiance     = getPtr<const float>(particleRadiance);
-    paramsHost.particleExtendedData = reinterpret_cast<const void*>(_state->gPipelineParticleData);
-    paramsHost.particleVisibility   = getPtr<int32_t>(particleVisibility);
+    paramsHost.particleDensity          = getPtr<const ParticleDensity>(particleDensity);
+    paramsHost.particleRadiance         = getPtr<const float>(particleRadiance);
+    paramsHost.particleExtendedFeatures = getPtr<const float>(particleExtendedFeatures);
+    paramsHost.particleExtendedData     = reinterpret_cast<const void*>(_state->gPipelineParticleData);
+    paramsHost.particleVisibility       = getPtr<int32_t>(particleVisibility);
 
-    paramsHost.rayRadiance    = packed_accessor32<float, 4>(rayRad);
-    paramsHost.rayDensity     = packed_accessor32<float, 4>(rayDns);
-    paramsHost.rayHitDistance = packed_accessor32<float, 4>(rayHit);
-    paramsHost.rayNormal      = packed_accessor32<float, 4>(rayNrm);
-    paramsHost.rayHitsCount   = packed_accessor32<float, 4>(rayHitsCount);
+    paramsHost.rayRadiance         = packed_accessor32<float, 4>(rayRad);
+    paramsHost.rayDensity          = packed_accessor32<float, 4>(rayDns);
+    paramsHost.rayHitDistance      = packed_accessor32<float, 4>(rayHit);
+    paramsHost.rayNormal           = packed_accessor32<float, 4>(rayNrm);
+    paramsHost.rayHitsCount        = packed_accessor32<float, 4>(rayHitsCount);
+    paramsHost.rayExtendedFeatures = packed_accessor32<float, 4>(rayExtendedFeatures);
 
     cudaStream_t cudaStream = at::cuda::getCurrentCUDAStream();
     reallocateParamsDevice(sizeof(paramsHost), cudaStream);
@@ -910,10 +928,11 @@ OptixTracer::trace(uint32_t frameNumber,
 
     CUDA_CHECK_LAST();
 
-    return std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>(rayRad, rayDns, rayHit, rayNrm, rayHitsCount, particleVisibility);
+    return std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>(
+        rayRad, rayDns, rayHit, rayNrm, rayExtendedFeatures, rayHitsCount, particleVisibility);
 }
 
-std::tuple<torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 OptixTracer::traceBwd(uint32_t frameNumber,
                       torch::Tensor rayToWorld,
                       torch::Tensor rayOri,
@@ -922,20 +941,23 @@ OptixTracer::traceBwd(uint32_t frameNumber,
                       torch::Tensor rayDns,
                       torch::Tensor rayHit,
                       torch::Tensor rayNrm,
+                      torch::Tensor rayExtendedFeatures,
                       torch::Tensor particleDensity,
                       torch::Tensor particleRadiance,
+                      torch::Tensor particleExtendedFeatures,
                       torch::Tensor rayRadGrd,
                       torch::Tensor rayDnsGrd,
                       torch::Tensor rayHitGrd,
                       torch::Tensor rayNrmGrd,
+                      torch::Tensor rayExtendedFeaturesGrd,
                       uint32_t renderOpts,
                       int sphDegree,
                       float minTransmittance) {
 
-    const torch::TensorOptions opts    = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
-    torch::Tensor particleDensityGrad  = torch::zeros({particleDensity.size(0), particleDensity.size(1)}, opts);
-    torch::Tensor particleRadianceGrad = torch::zeros({particleRadiance.size(0), particleRadiance.size(1)}, opts);
-
+    const torch::TensorOptions opts            = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+    torch::Tensor particleDensityGrad          = torch::zeros({particleDensity.size(0), particleDensity.size(1)}, opts);
+    torch::Tensor particleRadianceGrad         = torch::zeros({particleRadiance.size(0), particleRadiance.size(1)}, opts);
+    torch::Tensor particleExtendedFeaturesGrad = torch::zeros({particleExtendedFeatures.size(0), particleExtendedFeatures.size(1)}, opts);
     PipelineBackwardParameters paramsHost;
     paramsHost.handle = _state->gasHandle;
     paramsHost.aabb   = _state->gasAABB;
@@ -954,22 +976,26 @@ OptixTracer::traceBwd(uint32_t frameNumber,
     paramsHost.rayOrigin    = packed_accessor32<float, 4>(rayOri);
     paramsHost.rayDirection = packed_accessor32<float, 4>(rayDir);
 
-    paramsHost.particleDensity      = getPtr<const ParticleDensity>(particleDensity);
-    paramsHost.particleRadiance     = getPtr<const float>(particleRadiance);
-    paramsHost.particleExtendedData = reinterpret_cast<const void*>(_state->gPipelineParticleData);
+    paramsHost.particleDensity          = getPtr<const ParticleDensity>(particleDensity);
+    paramsHost.particleRadiance         = getPtr<const float>(particleRadiance);
+    paramsHost.particleExtendedFeatures = getPtr<const float>(particleExtendedFeatures);
+    paramsHost.particleExtendedData     = reinterpret_cast<const void*>(_state->gPipelineParticleData);
 
-    paramsHost.rayRadiance    = packed_accessor32<float, 4>(rayRad);
-    paramsHost.rayDensity     = packed_accessor32<float, 4>(rayDns);
-    paramsHost.rayHitDistance = packed_accessor32<float, 4>(rayHit);
-    paramsHost.rayNormal      = packed_accessor32<float, 4>(rayNrm);
+    paramsHost.rayRadiance         = packed_accessor32<float, 4>(rayRad);
+    paramsHost.rayDensity          = packed_accessor32<float, 4>(rayDns);
+    paramsHost.rayHitDistance      = packed_accessor32<float, 4>(rayHit);
+    paramsHost.rayNormal           = packed_accessor32<float, 4>(rayNrm);
+    paramsHost.rayExtendedFeatures = packed_accessor32<float, 4>(rayExtendedFeatures);
 
-    paramsHost.particleDensityGrad  = getPtr<ParticleDensity>(particleDensityGrad);
-    paramsHost.particleRadianceGrad = getPtr<float>(particleRadianceGrad);
+    paramsHost.particleDensityGrad          = getPtr<ParticleDensity>(particleDensityGrad);
+    paramsHost.particleRadianceGrad         = getPtr<float>(particleRadianceGrad);
+    paramsHost.particleExtendedFeaturesGrad = getPtr<float>(particleExtendedFeaturesGrad);
 
-    paramsHost.rayRadianceGrad    = packed_accessor32<float, 4>(rayRadGrd);
-    paramsHost.rayDensityGrad     = packed_accessor32<float, 4>(rayDnsGrd);
-    paramsHost.rayHitDistanceGrad = packed_accessor32<float, 4>(rayHitGrd);
-    paramsHost.rayNormalGrad      = packed_accessor32<float, 4>(rayNrmGrd);
+    paramsHost.rayRadianceGrad         = packed_accessor32<float, 4>(rayRadGrd);
+    paramsHost.rayDensityGrad          = packed_accessor32<float, 4>(rayDnsGrd);
+    paramsHost.rayHitDistanceGrad      = packed_accessor32<float, 4>(rayHitGrd);
+    paramsHost.rayNormalGrad           = packed_accessor32<float, 4>(rayNrmGrd);
+    paramsHost.rayExtendedFeaturesGrad = packed_accessor32<float, 4>(rayExtendedFeaturesGrd);
 
     cudaStream_t cudaStream = at::cuda::getCurrentCUDAStream();
 
@@ -981,5 +1007,5 @@ OptixTracer::traceBwd(uint32_t frameNumber,
                             sizeof(PipelineBackwardParameters), &_state->sbtTracingBwd,
                             rayRad.size(2), rayRad.size(1), rayRad.size(0)));
 
-    return std::tuple<torch::Tensor, torch::Tensor>(particleDensityGrad, particleRadianceGrad);
+    return std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>(particleDensityGrad, particleRadianceGrad, particleExtendedFeaturesGrad);
 }

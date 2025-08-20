@@ -1,0 +1,10 @@
+type: pca
+
+# Common parameters from FeatureCompressor
+n_components: 32  # Number of components to keep after compression
+
+# PCA-specific parameters
+use_robust_pca: false  # Whether to use robust PCA instead of standard PCA
+rpca_lambda: 1.0  # Regularization parameter for sparse component in RPCA
+rpca_max_iter: 100  # Maximum number of iterations for RPCA optimization
+rpca_tol: 1e-7  # Convergence tolerance for RPCA 

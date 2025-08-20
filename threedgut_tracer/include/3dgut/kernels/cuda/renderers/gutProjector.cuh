@@ -139,7 +139,7 @@ struct GUTProjector : Params, UTParams {
             return false;
         }
 
-        const tcnn::vec3& particleScale = particles.scale(particleParameters);
+        const tcnn::vec3& particleScale   = particles.scale(particleParameters);
         const tcnn::mat3 particleRotation = particles.rotation(particleParameters);
 
         particleSensorRay = particleMean - sensorWorldPosition;
@@ -266,10 +266,10 @@ struct GUTProjector : Params, UTParams {
         bool validConicEstimation = false;
         {
             validConicEstimation = computeProjectedExtentConicOpacity(particleProjCovariance,
-                                                                 particleProjOpacity,
-                                                                 particleProjExtent,
-                                                                 particleProjConicOpacity,
-                                                                 particleMaxConicOpacityPower);
+                                                                      particleProjOpacity,
+                                                                      particleProjExtent,
+                                                                      particleProjConicOpacity,
+                                                                      particleMaxConicOpacityPower);
         }
 
         particlesVisibilityCudaPtr[particleIdx] = validConicEstimation ? 1 : 0;
@@ -306,7 +306,7 @@ struct GUTProjector : Params, UTParams {
         if constexpr (!Params::PerRayParticleFeatures) {
             particles.initializeFeatures(parameters);
             reinterpret_cast<TFeaturesVec*>(particlesPrecomputedFeaturesPtr)[particleIdx] =
-                particles.template featuresCustomFromBuffer<false>(particleIdx, particleSensorRay / particleSensorDistance);
+                particles.featuresFromBuffer(particleIdx, particleSensorRay / particleSensorDistance);
         }
 
         particlesProjectedPositionPtr[particleIdx]     = particleProjCenter;
@@ -416,16 +416,19 @@ struct GUTProjector : Params, UTParams {
 
         Particles particles;
         particles.initializeDensity(parameters);
+        particles.initializeDensityGradient(parametersGradient);
         const tcnn::vec3 incidentDirection = tcnn::normalize(particles.fetchPosition(particleIdx) - sensorWorldPosition);
+        tcnn::vec3 incidentDirectionGrad   = tcnn::vec3::zero();
 
         particles.initializeFeatures(parameters);
         particles.initializeFeaturesGradient(parametersGradient);
-        particles.featuresBwdCustomToBuffer<false>(
-            particleIdx,
-            reinterpret_cast<const TFeaturesVec*>(particlesPrecomputedFeaturesPtr)[particleIdx],
-            reinterpret_cast<const TFeaturesVec*>(particlesPrecomputedFeaturesGradPtr)[particleIdx],
-            incidentDirection);
-        particles.initializeDensityGradient(parametersGradient);
-        particles.template densityIncidentDirectionBwdToBuffer<true>(particleIdx, sensorWorldPosition);
+
+        particles.featuresBwdToBuffer<true>(particleIdx,
+                                            reinterpret_cast<const TFeaturesVec*>(particlesPrecomputedFeaturesGradPtr)[particleIdx],
+                                            incidentDirection,
+                                            incidentDirectionGrad);
+
+        particles.template densityIncidentDirectionBwdToBuffer<true>(particleIdx, sensorWorldPosition, incidentDirectionGrad);
+
     }
 };

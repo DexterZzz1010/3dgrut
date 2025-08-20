@@ -104,6 +104,8 @@ class MCMCStrategy(BaseStrategy):
                     param[sampled_idxs] = new_densities
                 elif name == "scale":
                     param[sampled_idxs] = new_scales
+                elif name == "extended_features_linear":
+                    return param
                 param[dead_idxs] = param[sampled_idxs]
                 return torch.nn.Parameter(param, requires_grad=param.requires_grad)
 
@@ -132,6 +134,8 @@ class MCMCStrategy(BaseStrategy):
                     param[sampled_idxs] = new_densities
                 elif name == "scale":
                     param[sampled_idxs] = new_scales
+                elif name == "extended_features_linear":
+                    return param
                 param_new = torch.cat([param, param[sampled_idxs]])
                 return torch.nn.Parameter(param_new, requires_grad=param.requires_grad)
 

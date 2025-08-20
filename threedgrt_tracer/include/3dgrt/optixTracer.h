@@ -70,7 +70,7 @@ protected:
         CUdeviceptr paramsDevice;
         size_t paramsDeviceSz;
 
-        float particleKernelDegree;
+        int particleKernelType;
         float particleKernelMinResponse;
         bool particleKernelDensityClamping;
         int particleRadianceSphDegree;
@@ -100,9 +100,10 @@ protected:
     }* _state;
 
      std::vector<std::string> generateDefines(
-        float particleKernelDegree,
+        int particleKernelType,
         bool particleKernelDensityClamping,
         int particleRadianceSphDegree,
+        int extendedFeaturesDim,
         bool enableNormals,
         bool enableHitCounts
     );
@@ -131,27 +132,29 @@ public:
         const std::string& pipeline,
         const std::string& backwardPipeline,
         const std::string& primitive,
-        float particleKernelDegree,
+        int particleKernelType,
         float particleKernelMinResponse,
         bool particleKernelDensityClamping,
         int particleRadianceSphDegree,
+        int extendedFeaturesDim,
         bool enableNormals,
         bool enableHitCounts);
 
     virtual ~OptixTracer();
 
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
     virtual trace(uint32_t frameNumber,
                   torch::Tensor rayToWorld,
                   torch::Tensor rayOri,
                   torch::Tensor rayDir,
                   torch::Tensor particleDensity,
                   torch::Tensor particleRadiance,
+                  torch::Tensor particleExtendedFeatures,
                   uint32_t renderOpts,
                   int sphDegree,
                   float minTransmittance);
 
-    std::tuple<torch::Tensor, torch::Tensor>
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
     virtual traceBwd(uint32_t frameNumber,
                      torch::Tensor rayToWorld,
                      torch::Tensor rayOri,
@@ -160,12 +163,15 @@ public:
                      torch::Tensor rayDns,
                      torch::Tensor rayHit,
                      torch::Tensor rayNrm,
+                     torch::Tensor rayExtendedFeatures,
                      torch::Tensor particleDensity,
                      torch::Tensor particleRadiance,
+                     torch::Tensor particleExtendedFeatures,
                      torch::Tensor rayRadGrd,
                      torch::Tensor rayDnsGrd,
                      torch::Tensor rayHitGrd,
                      torch::Tensor rayNrmGrd,
+                     torch::Tensor rayExtendedFeaturesGrd,
                      uint32_t renderOpts,
                      int sphDegree,
                      float minTransmittance);
@@ -174,6 +180,7 @@ public:
                           torch::Tensor mogRot,
                           torch::Tensor mogScl,
                           torch::Tensor mogDns,
+                          torch::Tensor mogKernel,
                           unsigned int rebuild,
                           bool allow_update);
 };

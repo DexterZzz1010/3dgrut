@@ -91,18 +91,19 @@ struct GUTKBufferRenderer : Params {
     using DensityRawParameters = typename Particles::DensityRawParameters;
     using TFeaturesVec         = typename Particles::TFeaturesVec;
 
-    using TRayPayload         = RayPayload<Particles::FeaturesDim>;
-    using TRayPayloadBackward = RayPayloadBackward<Particles::FeaturesDim>;
+    using TRayPayload         = RayPayload<Particles::FeaturesDim, Particles::ExtendedFeaturesDim>;
+    using TRayPayloadBackward = RayPayloadBackward<Particles::FeaturesDim, Particles::ExtendedFeaturesDim>;
 
     struct PrefetchedParticleData {
         uint32_t idx;
         DensityParameters densityParameters;
     };
 
-    struct PrefetchedRawParticleData {
+    struct PrefetchedFullParticleData {
         uint32_t idx;
         TFeaturesVec features;
-        DensityRawParameters densityParameters;
+        DensityParameters densityParameters;
+        tcnn::vec4 quaternion;
     };
 
     template <typename TRayPayload>
@@ -121,20 +122,29 @@ struct GUTKBufferRenderer : Params {
                                                               hitAlphaGrad,
                                                               hitParticle.idx,
                                                               particles.featuresFromBuffer(hitParticle.idx, ray.direction),
-                                                              ray.featuresBackward,
-                                                              ray.featuresGradient);
+                                                              threedgut::sliceVec<0, TRayPayload::BaseFeatDim>(ray.featuresBackward),
+                                                              threedgut::sliceVec<0, TRayPayload::BaseFeatDim>(ray.featuresGradient));
             } else {
                 TFeaturesVec particleFeaturesGradientVec = TFeaturesVec::zero();
                 particles.featuresIntegrateBwd(hitParticle.alpha,
                                                hitAlphaGrad,
                                                particleFeatures[hitParticle.idx],
                                                particleFeaturesGradientVec,
-                                               ray.featuresBackward,
-                                               ray.featuresGradient);
+                                               threedgut::sliceVec<0, TRayPayload::BaseFeatDim>(ray.featuresBackward),
+                                               threedgut::sliceVec<0, TRayPayload::BaseFeatDim>(ray.featuresGradient));
 #pragma unroll
                 for (int i = 0; i < Particles::FeaturesDim; ++i) {
                     atomicAdd(&(particleFeaturesGradient[hitParticle.idx][i]), particleFeaturesGradientVec[i]);
                 }
+            }
+
+            if constexpr (Particles::HasExtendedFeatures) {
+                particles.extendedFeaturesIntegrateBwdToBuffer<false>(hitParticle.alpha,
+                                                                      hitAlphaGrad,
+                                                                      hitParticle.idx,
+                                                                      particles.extendedFeaturesFromBuffer(hitParticle.idx),
+                                                                      threedgut::sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.featuresBackward),
+                                                                      threedgut::sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.featuresGradient));
             }
 
             particles.densityProcessHitBwdToBuffer<false>(ray.origin,
@@ -157,11 +167,18 @@ struct GUTKBufferRenderer : Params {
                                               hitParticle.hitT,
                                               ray.hitT);
 
-            particles.featureIntegrateFwd(hitWeight,
-                                          Params::PerRayParticleFeatures ? particles.featuresFromBuffer(hitParticle.idx, ray.direction) : tcnn::max(particleFeatures[hitParticle.idx], 0.f),
-                                          ray.features);
+            if constexpr (Particles::HasExtendedFeatures) {
+                particles.extendedFeaturesIntegrateFwd(hitWeight,
+                                                       particles.extendedFeaturesFromBuffer(hitParticle.idx),
+                                                       threedgut::sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.features));
+            }
 
-            if (hitWeight > 0.0f) ray.countHit();
+            particles.featureIntegrateFwd(hitWeight,
+                                          Params::PerRayParticleFeatures ? particles.featuresFromBuffer(hitParticle.idx, ray.direction) : particleFeatures[hitParticle.idx],
+                                          threedgut::sliceVec<0, TRayPayload::BaseFeatDim>(ray.features));
+
+            if (hitWeight > 0.0f)
+                ray.countHit();
         }
 
         if (ray.transmittance < Particles::MinTransmittanceThreshold) {
@@ -204,8 +221,14 @@ struct GUTKBufferRenderer : Params {
         if constexpr (Backward && Params::PerRayParticleFeatures) {
             particles.initializeFeaturesGradient(parametersGradient);
         }
+        if constexpr (Particles::HasExtendedFeatures) {
+            particles.initializeExtendedFeatures(parameters);
+            if constexpr (Backward) {
+                particles.initializeExtendedFeaturesGradient(parametersGradient);
+            }
+        }
 
-        if constexpr (Backward && (Params::KHitBufferSize == 0)) {
+        if constexpr (false && Backward && (Params::KHitBufferSize == 0)) {
             evalBackwardNoKBuffer(ray, particles, tileParticleRangeIndices, tileNumBlocksToProcess, tileNumParticlesToProcess, tileThreadIdx,
                                   sortedTileParticleIdxPtr, particleFeaturesBuffer, particleFeaturesGradientBuffer);
         } else {
@@ -304,7 +327,7 @@ struct GUTKBufferRenderer : Params {
         static_assert(Backward && (Params::KHitBufferSize == 0), "Optimized path for backward pass with no KBuffer");
 
         using namespace threedgut;
-        __shared__ PrefetchedRawParticleData prefetchedRawParticlesData[GUTParameters::Tiling::BlockSize];
+        __shared__ PrefetchedFullParticleData prefetchedFullParticlesData[GUTParameters::Tiling::BlockSize];
 
         for (uint32_t i = 0; i < tileNumBlocksToProcess; i++, tileNumParticlesToProcess -= GUTParameters::Tiling::BlockSize) {
 
@@ -317,18 +340,21 @@ struct GUTKBufferRenderer : Params {
             if (toProcessSortedIndex < tileParticleRangeIndices.y) {
                 const uint32_t particleIdx = sortedTileParticleIdxPtr[toProcessSortedIndex];
                 if (particleIdx != GUTParameters::InvalidParticleIdx) {
-                    prefetchedRawParticlesData[tileThreadIdx].densityParameters = particles.fetchDensityRawParameters(particleIdx);
+                    DensityRawParameters densityRawParameters                    = particles.fetchDensityRawParameters(particleIdx);
+                    prefetchedFullParticlesData[tileThreadIdx].densityParameters = particles.densityParametersFromRaw(densityRawParameters);
+                    prefetchedFullParticlesData[tileThreadIdx].quaternion =
+                        {densityRawParameters.quaternion.x, densityRawParameters.quaternion.y, densityRawParameters.quaternion.z, densityRawParameters.quaternion.w};
                     if constexpr (Params::PerRayParticleFeatures) {
-                        prefetchedRawParticlesData[tileThreadIdx].features = TFeaturesVec::zero();
+                        prefetchedFullParticlesData[tileThreadIdx].features = TFeaturesVec::zero();
                     } else {
-                        prefetchedRawParticlesData[tileThreadIdx].features = tcnn::max(particleFeaturesBuffer[particleIdx], 0.f);
+                        prefetchedFullParticlesData[tileThreadIdx].features = particleFeaturesBuffer[particleIdx];
                     }
-                    prefetchedRawParticlesData[tileThreadIdx].idx = particleIdx;
+                    prefetchedFullParticlesData[tileThreadIdx].idx = particleIdx;
                 } else {
-                    prefetchedRawParticlesData[tileThreadIdx].idx = GUTParameters::InvalidParticleIdx;
+                    prefetchedFullParticlesData[tileThreadIdx].idx = GUTParameters::InvalidParticleIdx;
                 }
             } else {
-                prefetchedRawParticlesData[tileThreadIdx].idx = GUTParameters::InvalidParticleIdx;
+                prefetchedFullParticlesData[tileThreadIdx].idx = GUTParameters::InvalidParticleIdx;
             }
             __syncthreads();
 
@@ -339,7 +365,7 @@ struct GUTKBufferRenderer : Params {
                     break;
                 }
 
-                const PrefetchedRawParticleData particleData = prefetchedRawParticlesData[j];
+                const PrefetchedFullParticleData particleData = prefetchedFullParticlesData[j];
                 if (particleData.idx == GUTParameters::InvalidParticleIdx) {
                     ray.kill();
                     break;
@@ -347,38 +373,93 @@ struct GUTKBufferRenderer : Params {
 
                 DensityRawParameters densityRawParametersGrad;
                 densityRawParametersGrad.density    = 0.0f;
-                densityRawParametersGrad.position   = make_float3(0.0f);
-                densityRawParametersGrad.quaternion = make_float4(0.0f);
-                densityRawParametersGrad.scale      = make_float3(0.0f);
+                densityRawParametersGrad.position   = tcnn::vec3(0.0f);
+                densityRawParametersGrad.quaternion = tcnn::vec4(0.0f);
+                densityRawParametersGrad.scale      = tcnn::vec3(0.0f);
 
-                TFeaturesVec featuresGrad = TFeaturesVec::zero();
+                auto featuresGrad = tcnn::vec<Particles::FeaturesDim + Particles::ExtendedFeaturesDim>::zero();
+                static_assert(TRayPayload::BaseFeatDim == Particles::FeaturesDim, "FeaturesDim mismatch");
+                static_assert(TRayPayload::ExtFeatDim == Particles::ExtendedFeaturesDim, "ExtendedFeaturesDim mismatch");
 
-                if (ray.isAlive()) {
-                    particles.processHitBwd<Params::PerRayParticleFeatures>(
-                        ray.origin,
-                        ray.direction,
-                        particleData.idx,
-                        particleData.densityParameters,
-                        &densityRawParametersGrad,
-                        particleData.features,
-                        &featuresGrad,
-                        ray.transmittance,
-                        ray.transmittanceBackward,
-                        ray.transmittanceGradient,
-                        ray.features,
-                        ray.featuresBackward,
-                        ray.featuresGradient,
-                        ray.hitT,
-                        ray.hitTBackward,
-                        ray.hitTGradient);
+                HitParticle hitParticle;
+                hitParticle.idx = particleData.idx;
+
+                if (ray.isAlive() &&
+                    particles.densityHit(ray.origin,
+                                         ray.direction,
+                                         // FIXME : correct sensor specific support (eg LIDAR)
+                                         Params::MinProjectedRayRadius * ray.spread,
+                                         particleData.densityParameters,
+                                         hitParticle.alpha,
+                                         hitParticle.hitT) &&
+                    (hitParticle.hitT > ray.tMinMax.x) &&
+                    (hitParticle.hitT < ray.tMinMax.y)) {
+
+                    float hitAlphaGrad = 0.f;
+                    if constexpr (Params::PerRayParticleFeatures) {
+                        // FIXME : support atomic warp sum for per ray particle features
+                        particles.featuresIntegrateBwdToBuffer<false>(ray.direction,
+                                                                      ray.directionGradient,
+                                                                      hitParticle.alpha,
+                                                                      hitAlphaGrad,
+                                                                      hitParticle.idx,
+                                                                      particles.featuresFromBuffer(hitParticle.idx, ray.direction),
+                                                                      sliceVec<0, TRayPayload::BaseFeatDim>(ray.features),
+                                                                      sliceVec<0, TRayPayload::BaseFeatDim>(ray.featuresGradient));
+                    } else {
+                        particles.featuresIntegrateBwd(hitParticle.alpha,
+                                                       hitAlphaGrad,
+                                                       particleFeaturesBuffer[hitParticle.idx],
+                                                       sliceVec<0, Particles::FeaturesDim>(featuresGrad),
+                                                       sliceVec<0, TRayPayload::BaseFeatDim>(ray.features),
+                                                       sliceVec<0, TRayPayload::BaseFeatDim>(ray.featuresGradient));
+                    }
+                    if constexpr (Params::HasExtendedFeatures) {
+                        particles.extendedFeaturesIntegrateBwdToVec(hitParticle.alpha,
+                                                                    hitAlphaGrad,
+                                                                    hitParticle.idx,
+                                                                    particles.extendedFeaturesFromBuffer(hitParticle.idx),
+                                                                    sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.features),
+                                                                    sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.featuresGradient),
+                                                                    sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(featuresGrad));
+                    }
+
+                    particles.densityProcessHitBwdToRawParameters(ray.origin,
+                                                                  ray.originGradient,
+                                                                  ray.direction,
+                                                                  ray.directionGradient,
+                                                                  // FIXME : correct sensor specific support (eg LIDAR)
+                                                                  Params::MinProjectedRayRadius * ray.spread,
+                                                                  particleData.idx,
+                                                                  hitParticle.alpha,
+                                                                  hitAlphaGrad,
+                                                                  ray.transmittanceBackward,
+                                                                  ray.transmittanceGradient,
+                                                                  hitParticle.hitT,
+                                                                  ray.hitT,
+                                                                  ray.hitTGradient,
+                                                                  particleData.densityParameters,
+                                                                  particleData.quaternion,
+                                                                  densityRawParametersGrad);
+
+                    ray.transmittance *= (1.0f - hitParticle.alpha);
                     if (ray.transmittance < Particles::MinTransmittanceThreshold) {
                         ray.kill();
                     }
                 }
 
                 if constexpr (!Params::PerRayParticleFeatures) {
-                    particles.processHitBwdUpdateFeaturesGradient(particleData.idx, featuresGrad,
-                                                                  particleFeaturesGradientBuffer, tileThreadIdx);
+                    particles.processHitBwdUpdateFeaturesGradient<Particles::FeaturesDim>(
+                        particleData.idx,
+                        sliceVec<0, Particles::FeaturesDim>(featuresGrad),
+                        particleFeaturesGradientBuffer,
+                        tileThreadIdx);
+                }
+                if constexpr (Params::HasExtendedFeatures) {
+                    particles.processHitBwdUpdateExtendedFeaturesGradientToBuffer(
+                        particleData.idx,
+                        sliceVec<Particles::FeaturesDim, Particles::ExtendedFeaturesDim>(featuresGrad),
+                        tileThreadIdx);
                 }
                 particles.processHitBwdUpdateDensityGradient(particleData.idx, densityRawParametersGrad, tileThreadIdx);
             }

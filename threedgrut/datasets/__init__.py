@@ -22,43 +22,33 @@ def make(name: str, config, ray_jitter):
     match name:
         case "nerf":
             train_dataset = NeRFDataset(
-                config.path,
+                config,
                 split="train",
-                bg_color=config.model.background.color,
                 ray_jitter=ray_jitter,
             )
             val_dataset = NeRFDataset(
-                config.path,
+                config,
                 split="val",
-                bg_color=config.model.background.color,
             )
         case "colmap":
             train_dataset = ColmapDataset(
-                config.path,
+                config,
                 split="train",
-                downsample_factor=config.dataset.downsample_factor,
-                test_split_interval=config.dataset.test_split_interval,
                 ray_jitter=ray_jitter,
             )
             val_dataset = ColmapDataset(
-                config.path,
+                config,
                 split="val",
-                downsample_factor=config.dataset.downsample_factor,
-                test_split_interval=config.dataset.test_split_interval,
             )
         case "scannetpp":
             train_dataset = ScannetppDataset(
-                config.path,
+                config,
                 split="train",
                 ray_jitter=ray_jitter,
-                downsample_factor=config.dataset.downsample_factor,
-                test_split_interval=config.dataset.test_split_interval,
             )
             val_dataset = ScannetppDataset(
-                config.path,
-                split="val",
-                downsample_factor=config.dataset.downsample_factor,
-                test_split_interval=config.dataset.test_split_interval,
+                config,
+                split="val"
             )
         case _:
             raise ValueError(
@@ -72,23 +62,18 @@ def make_test(name: str, config):
     match name:
         case "nerf":
             dataset = NeRFDataset(
-                config.path,
+                config,
                 split="test",
-                bg_color=config.model.background.color,
             )
         case "colmap":
             dataset = ColmapDataset(
-                config.path,
+                config,
                 split="val",
-                downsample_factor=config.dataset.downsample_factor,
-                test_split_interval=config.dataset.test_split_interval,
             )
         case "scannetpp":
             dataset = ScannetppDataset(
-                config.path,
+                config,
                 split="val",
-                downsample_factor=config.dataset.downsample_factor,
-                test_split_interval=config.dataset.test_split_interval,
             )
         case _:
             raise ValueError(

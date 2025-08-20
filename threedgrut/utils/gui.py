@@ -75,7 +75,7 @@ class GUI:
         self.training_done = False
         self.viz_bbox = False
         self.live_update = True  # if disabled , will skip rendering updates to accelerate background training loop
-        self.viz_render_styles = ["color", "density", "distance", "hits", "normals"]
+        self.viz_render_styles = ["color", "density", "distance", "hits", "normals", "extended_features"]
         self.viz_render_style_ind = 0
         self.viz_render_style_scale = 1.0
         self.viz_curr_render_size = None
@@ -182,7 +182,7 @@ class GUI:
             )
 
             self.render_timer.start()
-            outputs = self.model(inputs, train=self.viz_render_train_view)
+            outputs = self.model(inputs, train=self.viz_render_train_view, rescale_extended_features=False)
             self.render_timer.end()
             self.render_width = window_w
             self.render_height = window_h
@@ -193,6 +193,7 @@ class GUI:
             outputs["pred_dist"],
             outputs["pred_normals"],
             outputs["hits_count"] / self.conf.writer.max_num_hits,
+            outputs["pred_extended_features"],
         )
 
     def update_render_view_viz(self, force=False):
@@ -284,7 +285,7 @@ class GUI:
                 self.viz_render_scalar_buffer = ps.get_quantity_buffer(self.viz_render_name, "values")
 
         # do the actual rendering
-        sple_orad, sple_odns, sple_odist, sple_onrm, sple_ohit = self.render_from_current_ps_view()
+        sple_orad, sple_odns, sple_odist, sple_onrm, sple_ohit, sple_oext = self.render_from_current_ps_view()
 
         # update the data
         if style == "color":
@@ -326,6 +327,14 @@ class GUI:
                 self.viz_render_color_buffer.update_data_from_device(sple_onrm.detach())
             else:
                 self.viz_render_color_buffer.update_data(to_np(sple_onrm))
+
+        elif style == "extended_features" and (sple_oext.shape[-1] >= 3):
+            # append 1s for alpha
+            sple_oext = torch.cat((sple_oext[...,:3], torch.ones_like(sple_orad[:, :, :, 0:1])), dim=-1)
+            if self.update_from_device:
+                self.viz_render_color_buffer.update_data_from_device(sple_oext.detach())
+            else:
+                self.viz_render_color_buffer.update_data(to_np(sple_oext))
 
     @torch.no_grad()
     def render_trajectory(self):

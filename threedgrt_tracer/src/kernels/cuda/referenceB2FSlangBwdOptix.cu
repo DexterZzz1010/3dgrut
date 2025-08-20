@@ -152,7 +152,7 @@ extern "C" __global__ void __raygen__rg() {
                 //                     (float*)params.particleRadianceGrad,
                 //                     params.hitMinGaussianResponse,
                 //                     params.alphaMinThreshold,
-                //                     PipelineParameters::ParticleKernelDegree,
+                //                     PipelineParameters::ParticleKernelType,
                 //                     PipelineParameters::SurfelPrimitive,
                 //                     params.sphDegree,
                 //                     &rayTransmittance,

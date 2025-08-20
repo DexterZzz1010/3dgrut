@@ -13,8 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <3dgrt/pipelineParameters.h>
 #include <3dgrt/kernels/slang/gaussianParticles.cuh>
+#include <3dgrt/pipelineParameters.h>
 // clang-format on
 
 extern "C" {
@@ -112,6 +112,13 @@ extern "C" __global__ void __raygen__rg() {
     float3 rayRadiance     = make_float3(0.0f);
     float rayTransmittance = 1.0f;
     float rayHitDistance   = 0.f;
+#if EXTENDED_FEATURES_DIM
+    FixedArray<float, PipelineParameters::ExtendedFeaturesDim> rayExtendedFeatures;
+#pragma unroll
+    for (int i = 0; i < PipelineParameters::ExtendedFeaturesDim; i++) {
+        rayExtendedFeatures[i] = 0.f;
+    }
+#endif
 #ifdef ENABLE_NORMALS
     float3 rayNormal = make_float3(0.f);
 #endif
@@ -150,29 +157,41 @@ extern "C" __global__ void __raygen__rg() {
 #endif
                 );
 
-                particleFeaturesIntegrateFwdFromBuffer(rayDirection, 
+                particleFeaturesIntegrateFwdFromBuffer(rayDirection,
                                                        hitWeight,
                                                        rayHit.particleId,
                                                        {{(float3*)params.particleRadiance, nullptr}, params.sphDegree},
                                                        &rayRadiance);
-                                                       
-                // NOTE(qi): Race condition here, but as we are writing the same value, it seems it is safe.
-                if (hitWeight > 0.f) {
-                    params.particleVisibility[rayHit.particleId] = 1;
-                }
-                
+
+#if EXTENDED_FEATURES_DIM
+                particleExtendedFeaturesIntegrateFwdFromBuffer(hitWeight,
+                                                               rayHit.particleId,
+                                                               {(float*)params.particleExtendedFeatures, nullptr, true},
+                                                               &rayExtendedFeatures);
+#endif
                 rayLastHitDistance = fmaxf(rayLastHitDistance, rayHit.distance);
 
 #ifdef ENABLE_HIT_COUNTS
                 rayHitsCount += hitWeight > 0.f ? 1.0f : 0.f;
 #endif
+
+                // NOTE(qi): Race condition here, but as we are writing the same value, it seems it is safe.
+                if (hitWeight > 0.f) {
+                    params.particleVisibility[rayHit.particleId] = 1;
+                }
             }
         }
     }
 
-    params.rayRadiance[idx.z][idx.y][idx.x][0]    = rayRadiance.x;
-    params.rayRadiance[idx.z][idx.y][idx.x][1]    = rayRadiance.y;
-    params.rayRadiance[idx.z][idx.y][idx.x][2]    = rayRadiance.z;
+    params.rayRadiance[idx.z][idx.y][idx.x][0] = rayRadiance.x;
+    params.rayRadiance[idx.z][idx.y][idx.x][1] = rayRadiance.y;
+    params.rayRadiance[idx.z][idx.y][idx.x][2] = rayRadiance.z;
+#if EXTENDED_FEATURES_DIM
+#pragma unroll
+    for (int i = 0; i < PipelineParameters::ExtendedFeaturesDim; i++) {
+        params.rayExtendedFeatures[idx.z][idx.y][idx.x][i] = rayExtendedFeatures[i];
+    }
+#endif
     params.rayDensity[idx.z][idx.y][idx.x][0]     = 1 - rayTransmittance;
     params.rayHitDistance[idx.z][idx.y][idx.x][0] = rayHitDistance;
     params.rayHitDistance[idx.z][idx.y][idx.x][1] = rayLastHitDistance;

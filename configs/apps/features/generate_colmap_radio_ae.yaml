@@ -1,0 +1,21 @@
+# @package _global_
+
+# order in which configs override each other (/* - denotes a relative search path)
+defaults:
+  - _self_
+  - /dataset: colmap
+  - /features/extractors: nv_radio
+  - /features/compressors: autoencoder
+
+path: ???
+
+num_workers: 24
+random_dataset_sample: true
+
+# Training settings (for autoencoder)
+training:
+  batch_size: 1
+  num_epochs: 10
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  early_stopping_patience: 10 

@@ -1,8 +1,8 @@
 method: 3dgrt # 3dgrt or 3dgut
   
-pipeline_type: reference
+pipeline_type: referenceSlang
 backward_pipeline_type: ${render.pipeline_type}Bwd
-particle_kernel_degree: 4
+particle_kernel_type: 9 # see gaussianParticles.slang
 particle_kernel_density_clamping: true
 particle_kernel_min_response: 0.0113
 particle_kernel_min_alpha: ${div:1.0,255.0}

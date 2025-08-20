@@ -322,18 +322,20 @@ static inline __device__ float particleScaledResponse(float grayDist, float modu
     }
 }
 
-template <int ParticleKernelDegree = 4, bool SurfelPrimitive = false>
+template <int ParticleKernelType = 4, int ExtendedFeaturesDim = 0, bool SurfelPrimitive = false>
 __device__ inline bool processHit(
     const float3& rayOrigin,
     const float3& rayDirection,
     const int32_t particleIdx,
     const ParticleDensity* particlesDensity,
     const float* particlesSphCoefficients,
+    const float* particleExtendedFeatures,
     const float minParticleKernelDensity,
     const float minParticleAlpha,
     const int32_t sphEvalDegree,
     float* transmittance,
     float3* radiance,
+    float* extendedFeatures,
     float* depth,
     float3* normal) {
     float3 particlePosition;
@@ -360,7 +362,7 @@ __device__ inline bool processHit(
     const float3 gcrod   = SurfelPrimitive ? gro + grd * -gro.z / grd.z : cross(grd, gro);
     const float grayDist = dot(gcrod, gcrod);
 
-    const float gres   = particleResponse<ParticleKernelDegree>(grayDist);
+    const float gres   = particleResponse<ParticleKernelType>(grayDist);
     const float galpha = fminf(0.99f, gres * particleDensity);
 
     const bool acceptHit = (gres > minParticleKernelDensity) && (galpha > minParticleAlpha);
@@ -380,6 +382,13 @@ __device__ inline bool processHit(
         const float3 grad = radianceFromSpH(sphEvalDegree, &sphCoefficients[0], rayDirection);
 
         *radiance += grad * weight;
+
+        // Integrate extended features
+#pragma unroll
+        for (int i = 0; i < ExtendedFeaturesDim; i++) {
+            extendedFeatures[i] += particleExtendedFeatures[particleIdx * ExtendedFeaturesDim + i] * weight;
+        }
+
         *transmittance *= (1 - galpha);
         *depth += hitT * weight;
 
@@ -453,7 +462,7 @@ __device__ inline bool intersectInstanceParticle(
     return false;
 }
 
-template <int ParticleKernelDegree = 4, bool SurfelPrimitive = false>
+template <int ParticleKernelType = 4, int ExtendedFeaturesDim = 0, bool SurfelPrimitive = false>
 __device__ inline void processHitBwd(
     const float3& rayOrigin,
     const float3& rayDirection,
@@ -462,6 +471,8 @@ __device__ inline void processHitBwd(
     ParticleDensity* particleDensityGradPtr,
     const float* particleRadiancePtr,
     float* particleRadianceGradPtr,
+    const float* particleExtendedFeaturesPtr,
+    float* particleExtendedFeaturesGradPtr,
     float minParticleKernelDensity,
     float minParticleAlpha,
     float minTransmittance,
@@ -472,6 +483,9 @@ __device__ inline void processHitBwd(
     float3 integratedRadiance,
     float3& radiance,
     float3 radianceGrad,
+    const float* integratedExtendedFeatures,
+    float* extendedFeatures,
+    float* extendedFeaturesGrad,
     float integratedDepth,
     float& depth,
     float depthGrad) {
@@ -501,7 +515,7 @@ __device__ inline void processHitBwd(
     const float3 gcrod   = SurfelPrimitive ? gro + grd * -gro.z / grd.z : cross(grd, gro);
     const float grayDist = dot(gcrod, gcrod);
 
-    const float gres   = particleResponse<ParticleKernelDegree>(grayDist);
+    const float gres   = particleResponse<ParticleKernelType>(grayDist);
     const float galpha = fminf(0.99f, gres * particleDensity);
 
     if ((gres > minParticleKernelDensity) && (galpha > minParticleAlpha)) {
@@ -567,6 +581,26 @@ __device__ inline void processHitBwd(
         const float3 residualRayRad = maxf3((nextTransmit <= minTransmittance ? make_float3(0) : (integratedRadiance - radiance) / nextTransmit),
                                             make_float3(0));
 
+        float featGradBwd = (grad.x - residualRayRad.x) * radianceGrad.x +
+                            (grad.y - residualRayRad.y) * radianceGrad.y +
+                            (grad.z - residualRayRad.z) * radianceGrad.z;
+
+        // extended features
+#pragma unroll
+        for (int i = 0; i < ExtendedFeaturesDim; i++) {
+            // --> rayExtFeat = weight * extFeat
+            // ===> d_rayExtFeat / d_extFeat = weight
+            atomicAdd(&particleExtendedFeaturesGradPtr[particleIdx * ExtendedFeaturesDim + i], weight * extendedFeaturesGrad[i]);
+            const float extFeat    = particleExtendedFeaturesPtr[particleIdx * ExtendedFeaturesDim + i];
+            const float rayExtFeat = weight * extFeat;
+            extendedFeatures[i] += rayExtFeat;
+            const float residualRayExtFeat = fmaxf((nextTransmit <= minTransmittance ? 0.f : (integratedExtendedFeatures[i] - extendedFeatures[i]) / nextTransmit),
+                                                     0.f);
+            featGradBwd += (extFeat - residualRayExtFeat) * extendedFeaturesGrad[i];
+        }
+
+        featGradBwd *= transmittance;
+
         // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         // ---> rayDns = 1 - prevTrm * (1-galpha) * nextTrm
         //             = 1 - (1-galpha) * prevTrm * nextTrm
@@ -579,9 +613,7 @@ __device__ inline void processHitBwd(
         // ===> d_rayRad / d_gdns = gres * transmit * grad - gres * transmit * residualRayRad
         atomicAdd(
             &particleDensityGrad.density,
-            gres * (galphaRayHitGrd + galphaRayDnsGrd + transmittance * (grad.x - residualRayRad.x) * radianceGrad.x +
-                    transmittance * (grad.y - residualRayRad.y) * radianceGrad.y +
-                    transmittance * (grad.z - residualRayRad.z) * radianceGrad.z));
+            gres * (galphaRayHitGrd + galphaRayDnsGrd + featGradBwd));
 
         // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         // ---> rayDns = 1 - prevTrm * (1-galpha) * nextTrm
@@ -593,16 +625,13 @@ __device__ inline void processHitBwd(
         //                  = accumulatedRayRad + gdns * gres * transmit * grad + (1 - gdns * gres) *
         //                  transmit * residualRayRad
         // ===> d_rayRad / d_gres = gdns * transmit * grad - gdns * transmit * residualRayRad
-        const float gresGrd =
-            particleDensity * (galphaRayHitGrd + galphaRayDnsGrd + transmittance * (grad.x - residualRayRad.x) * radianceGrad.x +
-                               transmittance * (grad.y - residualRayRad.y) * radianceGrad.y +
-                               transmittance * (grad.z - residualRayRad.z) * radianceGrad.z);
+        const float gresGrd = particleDensity * (galphaRayHitGrd + galphaRayDnsGrd + featGradBwd);
 
         // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         // ---> gres = exp(-0.0555 * grayDist * grayDist)
         // ===> d_gres / d_grayDist = -0.111 * grayDist * exp(-0.555 * grayDist * grayDist)
         //                          = -0.111 * grayDist * gres
-        const float grayDistGrd = particleResponseGrd<PARTICLE_KERNEL_DEGREE>(grayDist, gres, gresGrd);
+        const float grayDistGrd = particleResponseGrd<ParticleKernelType>(grayDist, gres, gresGrd);
 
         float3 grdGrd, groGrd;
         if (SurfelPrimitive) {

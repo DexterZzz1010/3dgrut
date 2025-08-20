@@ -169,15 +169,17 @@ class Tracer:
             mog_rot,
             mog_scl,
             mog_dns,
+            mog_ker,
             mog_sph,
+            mog_ext,
             sensor_params,
             sensor_poses,
         ):
             particle_density = torch.concat(
-                [mog_pos, mog_dns, mog_rot, mog_scl, torch.zeros_like(mog_dns)], dim=1
+                [mog_pos, mog_dns, mog_rot, mog_scl, mog_ker], dim=1
             ).contiguous()
             particle_radiance = mog_sph.contiguous()
-
+            particle_extended_features = mog_ext.contiguous()
             ray_time = (
                 torch.ones(
                     (ray_ori.shape[0], ray_ori.shape[1], ray_ori.shape[2], 1), device=ray_ori.device, dtype=torch.long
@@ -185,11 +187,12 @@ class Tracer:
                 * sensor_poses.timestamps_us[0]
             )
 
-            ray_radiance_density, ray_hit_distance, ray_hit_count, mog_visibility = tracer_wrapper.trace(
+            ray_radiance_density, ray_hit_distance, ray_extended_features, ray_hit_count, mog_visibility = tracer_wrapper.trace(
                 frame_id,
                 n_active_features,
                 particle_density,
                 particle_radiance,
+                particle_extended_features,
                 ray_ori.contiguous(),
                 ray_dir.contiguous(),
                 ray_time.contiguous(),
@@ -206,8 +209,10 @@ class Tracer:
                 ray_time,
                 ray_radiance_density,
                 ray_hit_distance,
+                ray_extended_features,
                 particle_density,
                 particle_radiance,
+                particle_extended_features,
             )
 
             ctx.frame_id = frame_id
@@ -219,6 +224,7 @@ class Tracer:
             return (
                 ray_radiance_density,
                 ray_hit_distance,
+                ray_extended_features,
                 ray_hit_count,
                 mog_visibility,
             )
@@ -228,6 +234,7 @@ class Tracer:
             ctx,
             ray_radiance_density_grd,
             ray_hit_distance_grd,
+            ray_extended_features_grd,
             ray_hit_count_grd_UNUSED,
             mog_visibility_grd_UNUSED,
         ):
@@ -237,8 +244,10 @@ class Tracer:
                 ray_time,
                 ray_radiance_density,
                 ray_hit_distance,
+                ray_extended_features,
                 particle_density,
                 particle_radiance,
+                particle_extended_features,
             ) = ctx.saved_variables
 
             frame_id = ctx.frame_id
@@ -246,11 +255,12 @@ class Tracer:
             sensor_params = ctx.sensor_params
             sensor_poses = ctx.sensor_poses
 
-            particle_density_grd, particle_radiance_grd = ctx.tracer_wrapper.trace_bwd(
+            particle_density_grd, particle_radiance_grd, particle_extended_features_grd = ctx.tracer_wrapper.trace_bwd(
                 frame_id,
                 n_active_features,
                 particle_density,
                 particle_radiance,
+                particle_extended_features,
                 ray_ori,
                 ray_dir,
                 ray_time,
@@ -263,13 +273,15 @@ class Tracer:
                 ray_radiance_density_grd,
                 ray_hit_distance,
                 ray_hit_distance_grd,
+                ray_extended_features,
+                ray_extended_features_grd,
             )
 
-            mog_pos_grd, mog_dns_grd, mog_rot_grd, mog_scl_grd, _ = torch.split(
+            mog_pos_grd, mog_dns_grd, mog_rot_grd, mog_scl_grd, mog_ker_grd = torch.split(
                 particle_density_grd, [3, 1, 4, 3, 1], dim=1
             )
             mog_sph_grd = particle_radiance_grd
-
+            mog_ext_grd = particle_extended_features_grd
             return (
                 None,  # tracer_wrapper
                 None,  # frame_id
@@ -280,7 +292,9 @@ class Tracer:
                 mog_rot_grd.contiguous(),
                 mog_scl_grd.contiguous(),
                 mog_dns_grd.contiguous(),
+                mog_ker_grd.contiguous(),
                 mog_sph_grd.contiguous(),
+                mog_ext_grd.contiguous(),
                 None,  # sensor_params
                 None,  # sensor_poses
             )
@@ -312,6 +326,7 @@ class Tracer:
             (
                 pred_rgba,
                 pred_dist,
+                pred_extended_features,
                 hits_count,
                 mog_visibility,
             ) = Tracer._Autograd.apply(
@@ -324,7 +339,9 @@ class Tracer:
                 gaussians.get_rotation().contiguous(),
                 gaussians.get_scale().contiguous(),
                 gaussians.get_density().contiguous(),
+                gaussians.get_kernel_parameters().contiguous(),
                 gaussians.get_features().contiguous(),
+                gaussians.get_extended_features().contiguous(),
                 sensor,
                 poses,
             )
@@ -332,6 +349,7 @@ class Tracer:
             pred_rgb = pred_rgba[..., :3].unsqueeze(0).contiguous()
             pred_opacity = pred_rgba[..., 3:].unsqueeze(0).contiguous()
             pred_dist = pred_dist.unsqueeze(0).contiguous()
+            pred_extended_features = pred_extended_features.unsqueeze(0).contiguous()
             hits_count = hits_count.unsqueeze(0).contiguous()
 
             pred_rgb, pred_opacity = gaussians.background(
@@ -344,6 +362,7 @@ class Tracer:
             "pred_rgb": pred_rgb,
             "pred_opacity": pred_opacity,
             "pred_dist": pred_dist,
+            "pred_extended_features": pred_extended_features,
             "pred_normals": torch.nn.functional.normalize(torch.ones_like(pred_rgb), dim=3),
             "hits_count": hits_count,
             "frame_time_ms": timings["forward_render"] if "forward_render" in timings else 0.0,

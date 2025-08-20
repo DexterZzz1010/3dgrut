@@ -96,9 +96,9 @@ void integrateFeaturesFromBuffer<let backToFront : bool>(float weight,
 // Entry points
 
 [CudaDeviceExport] inline void particleExtendedFeaturesIntegrateFwdFromBuffer(in float weight,
-                                                           in uint32_t particleIdx,
-                                                           extendedFeatureParticle.ParametersBuffer parametersBuffer,
-                                                           inout float integratedFeatures[extendedFeatureParticle.ExtendedFeaturesDim])
+                                                                              in uint32_t particleIdx,
+                                                                              extendedFeatureParticle.ParametersBuffer parametersBuffer,
+                                                                              inout float integratedFeatures[extendedFeatureParticle.ExtendedFeaturesDim])
 {
     extendedFeatureParticle.integrateFeaturesFromBuffer<false>(weight, particleIdx, parametersBuffer, integratedFeatures);
 }

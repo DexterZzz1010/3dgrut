@@ -142,7 +142,6 @@ struct GUTKBufferRenderer : Params {
                 particles.extendedFeaturesIntegrateBwdToBuffer<false>(hitParticle.alpha,
                                                                       hitAlphaGrad,
                                                                       hitParticle.idx,
-                                                                      particles.extendedFeaturesFromBuffer(hitParticle.idx),
                                                                       threedgut::sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.featuresBackward),
                                                                       threedgut::sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.featuresGradient));
             }
@@ -168,9 +167,9 @@ struct GUTKBufferRenderer : Params {
                                               ray.hitT);
 
             if constexpr (Particles::HasExtendedFeatures) {
-                particles.extendedFeaturesIntegrateFwd(hitWeight,
-                                                       particles.extendedFeaturesFromBuffer(hitParticle.idx),
-                                                       threedgut::sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.features));
+                particles.extendedFeaturesIntegrateFwdFromBuffer(hitWeight,
+                                                                 hitParticle.idx,
+                                                                 threedgut::sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.features));
             }
 
             particles.featureIntegrateFwd(hitWeight,

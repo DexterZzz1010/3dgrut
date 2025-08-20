@@ -35,7 +35,7 @@ struct ParticeFetchedDensity {
     float shape;
 };
 
-};
+}; // namespace threedgut
 
 template <typename TBuffer, bool TDifferentiable>
 struct ShRadiativeGaussianParticlesBuffer {
@@ -423,9 +423,9 @@ struct ShRadiativeGaussianVolumetricFeaturesParticles : Params, public ExtParams
         }
     }
 
-    static constexpr bool HasExtendedFeatures = Params::ExtendedFeaturesDim > 0;
-    using TExtendedFeaturesVec                = typename tcnn::vec<HasExtendedFeatures ? Params::ExtendedFeaturesDim : 1>;
-    using TExtendedFeaturesArr                = FixedArray<float, HasExtendedFeatures ? Params::ExtendedFeaturesDim : 1>; //< defined by Slang compiler
+    static constexpr bool HasExtendedFeatures = ExtParams::ExtendedFeaturesDim > 0;
+    using TExtendedFeaturesVec                = typename tcnn::vec<HasExtendedFeatures ? ExtParams::ExtendedFeaturesDim : 1>;
+    using TExtendedFeaturesArr                = FixedArray<float, HasExtendedFeatures ? ExtParams::ExtendedFeaturesDim : 1>; //< defined by Slang compiler
     using ExtendedFeaturesParameters          = TExtendedFeaturesVec;
 
     inline __device__ void initializeExtendedFeatures(threedgut::MemoryHandles parameters) {
@@ -446,29 +446,28 @@ struct ShRadiativeGaussianVolumetricFeaturesParticles : Params, public ExtParams
         }
     }
 
-    __forceinline__ __device__ void extendedFeaturesIntegrateFwd(float weight,
-                                                                 const TExtendedFeaturesVec& features,
-                                                                 TExtendedFeaturesVec& integratedFeatures) const {
-        particleExtendedFeaturesIntegrateFwd(weight,
-                                             *reinterpret_cast<const TExtendedFeaturesArr*>(features.data()),
-                                             reinterpret_cast<TExtendedFeaturesArr*>(integratedFeatures.data()));
+    __forceinline__ __device__ void extendedFeaturesIntegrateFwdFromBuffer(float weight,
+                                                                          uint32_t particleIdx,
+                                                                          TExtendedFeaturesVec& integratedFeatures) const {
+        particleExtendedFeaturesIntegrateFwdFromBuffer(weight,
+                                                       particleIdx,
+                                                       {reinterpret_cast<float*>(m_extendedFeaturesParameters.ptr), nullptr, true},
+                                                       reinterpret_cast<TExtendedFeaturesArr*>(integratedFeatures.data()));
     }
 
     template <bool exclusiveGradient>
     __forceinline__ __device__ void extendedFeaturesIntegrateBwdToBuffer(float alpha,
                                                                          float& alphaGrad,
                                                                          uint32_t particleIdx,
-                                                                         const TExtendedFeaturesVec& features,
                                                                          TExtendedFeaturesVec& integratedFeatures,
                                                                          TExtendedFeaturesVec& integratedFeaturesGrad) const {
 
         particleExtendedFeaturesIntegrateBwdToBuffer(alpha,
                                                      &alphaGrad,
                                                      particleIdx,
-                                                     {reinterpret_cast<TExtendedFeaturesArr*>(m_extendedFeaturesParameters.ptr),
-                                                      reinterpret_cast<TExtendedFeaturesArr*>(m_extendedFeaturesParameters.gradPtr),
+                                                     {reinterpret_cast<float*>(m_extendedFeaturesParameters.ptr),
+                                                      reinterpret_cast<float*>(m_extendedFeaturesParameters.gradPtr),
                                                       exclusiveGradient},
-                                                     *reinterpret_cast<const TExtendedFeaturesArr*>(features.data()),
                                                      reinterpret_cast<TExtendedFeaturesArr*>(integratedFeatures.data()),
                                                      reinterpret_cast<TExtendedFeaturesArr*>(integratedFeaturesGrad.data()));
     }
@@ -499,10 +498,10 @@ struct ShRadiativeGaussianVolumetricFeaturesParticles : Params, public ExtParams
                                                                                         TExtendedFeaturesVec& featuresGrad,
                                                                                         uint32_t tileThreadIdx) {
         if constexpr (HasExtendedFeatures && TDifferentiable) {
-            processHitBwdUpdateFeaturesGradient<Params::ExtendedFeaturesDim, synchedThread>(particleIdx,
-                                                                                            featuresGrad,
-                                                                                            m_extendedFeaturesParameters.gradPtr,
-                                                                                            tileThreadIdx);
+            processHitBwdUpdateFeaturesGradient<ExtParams::ExtendedFeaturesDim, synchedThread>(particleIdx,
+                                                                                               featuresGrad,
+                                                                                               m_extendedFeaturesParameters.gradPtr,
+                                                                                               tileThreadIdx);
         }
     }
 

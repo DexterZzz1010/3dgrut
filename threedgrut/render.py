@@ -148,6 +148,12 @@ class Renderer:
                 "ssim": StructuralSimilarityIndexMeasure(data_range=1.0).to("cuda"),
                 "lpips": LearnedPerceptualImagePatchSimilarity(net_type="vgg", normalize=True).to("cuda"),
             }
+        
+        # Extended features criterions
+        if self.extended_features_metrics:
+            criterions |= {
+                "psnr_ext": PeakSignalNoiseRatio(data_range=1).to("cuda"),
+            }
 
         output_path_renders = os.path.join(self.out_dir, f"ours_{int(self.global_step)}", "renders")
         os.makedirs(output_path_renders, exist_ok=True)
@@ -162,14 +168,24 @@ class Renderer:
         inference_time = []
         test_images = []
 
+        # Extended features metrics tracking
+        psnr_ext = []
+        test_images_ext = []
+
         best_psnr = -1.0
         worst_psnr = 2**16 * 1.0
+        best_psnr_ext = -1.0
+        worst_psnr_ext = 2**16 * 1.0
 
         best_psnr_img = None
         best_psnr_img_gt = None
+        best_psnr_img_ext = None
+        best_psnr_img_gt_ext = None
 
         worst_psnr_img = None
         worst_psnr_img_gt = None
+        worst_psnr_img_ext = None
+        worst_psnr_img_gt_ext = None
 
         logger.start_progress(task_name="Rendering", total_steps=len(self.dataloader), color="orange1")
 
@@ -216,6 +232,56 @@ class Renderer:
                 worst_psnr_img = pred_img_to_write
                 worst_psnr_img_gt = gt_img_to_write
 
+            # Extended features metrics computation
+            if self.extended_features_metrics and "pred_extended_features" in outputs and gpu_batch.features_gt is not None:
+                pred_extended_features = outputs["pred_extended_features"]
+                extended_features_gt = gpu_batch.features_gt
+                
+                # Determine the number of feature components to use (minimum between pred and gt)
+                n_extended_features = min(pred_extended_features.shape[-1], extended_features_gt.shape[-1])
+                
+                if n_extended_features > 0:
+                    # Use all feature components for PSNR computation
+                    pred_ext_all = pred_extended_features[..., :n_extended_features]
+                    gt_ext_all = extended_features_gt[..., :n_extended_features]
+                    
+                    # Resize predicted features to match ground truth size if needed (same as trainer.py)
+                    if pred_ext_all.shape != gt_ext_all.shape:
+                        pred_ext_all = torch.nn.functional.interpolate(
+                            pred_ext_all.permute(0, 3, 1, 2),  # [B, C, H, W]
+                            size=gt_ext_all.shape[1:3],
+                            mode='area'
+                        ).permute(0, 2, 3, 1)  # Back to [B, H, W, C]
+                    
+                    # Clamp values to [0, 1] range for metrics
+                    pred_ext_all = pred_ext_all.clamp(0, 1)
+                    gt_ext_all = gt_ext_all.clamp(0, 1)
+                    
+                    # Compute PSNR using all feature components
+                    psnr_single_img_ext = criterions["psnr_ext"](pred_ext_all, gt_ext_all).item()
+                    psnr_ext.append(psnr_single_img_ext)
+                    
+                    # For visualization, use only first 3 components if available
+                    if n_extended_features >= 3:
+                        pred_ext_rgb = pred_ext_all[..., :3]
+                        gt_ext_rgb = gt_ext_all[..., :3]
+                        
+                        pred_img_ext_to_write = pred_ext_rgb[-1].clip(0, 1.0)
+                        gt_img_ext_to_write = gt_ext_rgb[-1].clip(0, 1.0)
+                        
+                        if self.writer is not None:
+                            test_images_ext.append(pred_img_ext_to_write)
+                        
+                        if psnr_single_img_ext > best_psnr_ext:
+                            best_psnr_ext = psnr_single_img_ext
+                            best_psnr_img_ext = pred_img_ext_to_write
+                            best_psnr_img_gt_ext = gt_img_ext_to_write
+
+                        if psnr_single_img_ext < worst_psnr_ext:
+                            worst_psnr_ext = psnr_single_img_ext
+                            worst_psnr_img_ext = pred_img_ext_to_write
+                            worst_psnr_img_gt_ext = gt_img_ext_to_write
+
             # evaluate on full image
             ssim.append(
                 criterions["ssim"](
@@ -229,6 +295,8 @@ class Renderer:
                     rgb_gt_full.permute(0, 3, 1, 2),
                 ).item()
             )
+            
+
 
             # Record the time
             inference_time.append(outputs["frame_time_ms"])
@@ -250,6 +318,13 @@ class Renderer:
             std_psnr=std_psnr,
         )
 
+        # Extended features metrics
+        if self.extended_features_metrics and len(psnr_ext) > 0:
+            mean_psnr_ext = np.mean(psnr_ext)
+            std_psnr_ext = np.std(psnr_ext)
+            table["mean_psnr_ext"] = mean_psnr_ext
+            table["std_psnr_ext"] = std_psnr_ext
+
         if self.conf.render.enable_kernel_timings:
             table["mean_inference_time"] = f"{'{:.2f}'.format(mean_inference_time)}" + " ms/frame"
 
@@ -260,11 +335,24 @@ class Renderer:
             self.writer.add_scalar("ssim/test", mean_ssim, self.global_step)
             self.writer.add_scalar("lpips/test", mean_lpips, self.global_step)
             self.writer.add_scalar("time/inference/test", mean_inference_time, self.global_step)
+            
+            # Extended features metrics logging
+            if self.extended_features_metrics and len(psnr_ext) > 0:
+                self.writer.add_scalar("psnr_ext/test", mean_psnr_ext, self.global_step)
 
             if len(test_images) > 0:
                 self.writer.add_images(
                     "image/pred/test",
                     torch.stack(test_images),
+                    self.global_step,
+                    dataformats="NHWC",
+                )
+
+            # Extended features image logging
+            if self.extended_features_metrics and len(test_images_ext) > 0:
+                self.writer.add_images(
+                    "image/pred_ext/test",
+                    torch.stack(test_images_ext),
                     self.global_step,
                     dataformats="NHWC",
                 )
@@ -281,6 +369,23 @@ class Renderer:
                 self.writer.add_images(
                     "image/worst_psnr/test",
                     torch.stack([worst_psnr_img, worst_psnr_img_gt]),
+                    self.global_step,
+                    dataformats="NHWC",
+                )
+
+            # Extended features best/worst image logging
+            if self.extended_features_metrics and best_psnr_img_ext is not None:
+                self.writer.add_images(
+                    "image/best_psnr_ext/test",
+                    torch.stack([best_psnr_img_ext, best_psnr_img_gt_ext]),
+                    self.global_step,
+                    dataformats="NHWC",
+                )
+
+            if self.extended_features_metrics and worst_psnr_img_ext is not None:
+                self.writer.add_images(
+                    "image/worst_psnr_ext/test",
+                    torch.stack([worst_psnr_img_ext, worst_psnr_img_gt_ext]),
                     self.global_step,
                     dataformats="NHWC",
                 )

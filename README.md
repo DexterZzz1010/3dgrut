@@ -46,6 +46,7 @@ To mitigate this limitation, we also propose 3DGUT, which enables support for di
   - [Running with Docker](#running-with-docker)
 - [💻 2. Train 3DGRT or 3DGUT scenes](#-2-train-3dgrt-or-3dgut-scenes)
   - [Using image masks](#using-image-masks)
+  - [Extended Features Workflow](#extended-features-workflow)
   - [Exporting USDZ for use in Omniverse and Isaac Sim](#exporting-usdz-for-use-in-omniverse-and-isaac-sim)
 - [🎥 3. Rendering from Checkpoints](#-3-rendering-from-checkpoints)
   - [To visualize training progress interactively](#to-visualize-training-progress-interactively)
@@ -177,6 +178,50 @@ In order to use image masks, you need to provide a mask for each image in the da
 The provided masks should have the same resolution as their corresponding images and be stored in the same folder with the same name but with `_mask.png` extension. For example, to mask out the parts of the image `path-to-image/image.jpeg`, the mask should be stored at `path-to-image/image_mask.png`.
 
 **NOTE**: The masks are only used for loss computation and not for computing the metrics.
+
+### Extended Features Workflow
+
+3DGRUT supports training and evaluation with extended features, enabling representation of scene properties beyond RGB color. The workflow consists of three main steps: feature extraction & compression, training, and evaluation.
+
+#### 1. Feature Extraction & Compression
+Extract and compress features from images using NVIDIA RADIO. Both extraction and compression are performed in a single script:
+
+```bash
+# Extract and compress with PCA (lightweight)
+python -m threedgrut.features.generate_features --config-name apps/features/generate_colmap_radio_pca path=data/mipnerf360/bonsai
+
+# Extract and compress with autoencoder (higher quality)
+python -m threedgrut.features.generate_features --config-name apps/features/generate_colmap_radio_ae path=data/mipnerf360/bonsai
+```
+
+#### 2. Training with Extended Features
+Train models with extended features enabled:
+
+```bash
+# Train with RADIO features using autoencoder compression
+python train.py --config-name apps/colmap_3dgrt_radio.yaml path=data/mipnerf360/bonsai out_dir=runs experiment_name=bonsai_radio dataset.downsample_factor=2
+
+# Train with extended features loss enabled
+python train.py --config-name apps/colmap_3dgrt_radio.yaml path=data/mipnerf360/bonsai loss.use_extended_features=true loss.lambda_extended_features=0.1
+```
+
+#### 3. Evaluation with Extended Features Metrics
+Evaluate models with extended features metrics:
+
+```bash
+# Render with extended features metrics enabled (modify config or override)
+python render.py --checkpoint runs/bonsai_radio/ckpt_last.pt --out-dir outputs/eval
+
+# To enable extended features metrics, set extended_features_metrics=true in your config, or use hydra override:
+python train.py --config-name apps/colmap_3dgrt_radio.yaml path=data/mipnerf360/bonsai extended_features_metrics=true test_last=true
+
+# The evaluation will compute PSNR for all feature components and save visualizations using the first 3 components as RGB
+```
+
+**Available Configurations:**
+- **Feature Extractors**: `nv_radio` (NVIDIA RADIO), `skip` (no extraction)
+- **Feature Compressors**: `autoencoder`, `pca`, `skip` (no compression)
+- **Training Configs**: `colmap_3dgrt_radio.yaml`, `colmap_3dgut_radio.yaml`
 
 ### Exporting USDZ for use in Omniverse and Isaac Sim
 

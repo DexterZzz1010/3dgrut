@@ -20,12 +20,12 @@ dataset:
 model:
   extended_features:
     dim: 32
-    activation: sigmoid
+    activation: none
 
-loss:
-  use_l1: false
-  use_l2: false
-  use_ssim: false
+# loss:
+#   use_l1: false
+#   use_l2: false
+#   use_ssim: false
 
 # overwrite of default parameters
 val_frequency: 999999 # never validate

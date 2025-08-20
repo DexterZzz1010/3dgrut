@@ -329,8 +329,10 @@ class GUI:
                 self.viz_render_color_buffer.update_data(to_np(sple_onrm))
 
         elif style == "extended_features" and (sple_oext.shape[-1] >= 3):
+            # Apply clamping for proper visualization and take first 3 components
+            sple_oext_clamped = sple_oext[...,:3].clamp(0, 1)
             # append 1s for alpha
-            sple_oext = torch.cat((sple_oext[...,:3], torch.ones_like(sple_orad[:, :, :, 0:1])), dim=-1)
+            sple_oext = torch.cat((sple_oext_clamped, torch.ones_like(sple_orad[:, :, :, 0:1])), dim=-1)
             if self.update_from_device:
                 self.viz_render_color_buffer.update_data_from_device(sple_oext.detach())
             else:

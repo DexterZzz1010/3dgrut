@@ -162,6 +162,15 @@ class Renderer:
             output_path_gt = os.path.join(self.out_dir, f"ours_{int(self.global_step)}", "gt")
             os.makedirs(output_path_gt, exist_ok=True)
 
+        # Extended features output directories
+        if self.extended_features_metrics:
+            output_path_renders_ext = os.path.join(self.out_dir, f"ours_{int(self.global_step)}", "renders_ext")
+            os.makedirs(output_path_renders_ext, exist_ok=True)
+            
+            if self.save_gt:
+                output_path_gt_ext = os.path.join(self.out_dir, f"ours_{int(self.global_step)}", "gt_ext")
+                os.makedirs(output_path_gt_ext, exist_ok=True)
+
         psnr = []
         ssim = []
         lpips = []
@@ -266,8 +275,24 @@ class Renderer:
                         pred_ext_rgb = pred_ext_all[..., :3]
                         gt_ext_rgb = gt_ext_all[..., :3]
                         
-                        pred_img_ext_to_write = pred_ext_rgb[-1].clip(0, 1.0)
-                        gt_img_ext_to_write = gt_ext_rgb[-1].clip(0, 1.0)
+                        # Apply clamping for proper visualization
+                        pred_ext_rgb_clamped = pred_ext_rgb.clamp(0, 1)
+                        gt_ext_rgb_clamped = gt_ext_rgb.clamp(0, 1)
+                        
+                        pred_img_ext_to_write = pred_ext_rgb_clamped[-1]
+                        gt_img_ext_to_write = gt_ext_rgb_clamped[-1]
+                        
+                        # Save extended features images (first 3 components as RGB)
+                        torchvision.utils.save_image(
+                            pred_ext_rgb_clamped.squeeze(0).permute(2, 0, 1),
+                            os.path.join(output_path_renders_ext, "{0:05d}".format(iteration) + ".png"),
+                        )
+                        
+                        if self.save_gt:
+                            torchvision.utils.save_image(
+                                gt_ext_rgb_clamped.squeeze(0).permute(2, 0, 1),
+                                os.path.join(output_path_gt_ext, "{0:05d}".format(iteration) + ".png"),
+                            )
                         
                         if self.writer is not None:
                             test_images_ext.append(pred_img_ext_to_write)

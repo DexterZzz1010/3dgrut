@@ -262,10 +262,6 @@ class Renderer:
                             mode='area'
                         ).permute(0, 2, 3, 1)  # Back to [B, H, W, C]
                     
-                    # Clamp values to [0, 1] range for metrics
-                    pred_ext_all = pred_ext_all.clamp(0, 1)
-                    gt_ext_all = gt_ext_all.clamp(0, 1)
-                    
                     # Compute PSNR using all feature components
                     psnr_single_img_ext = criterions["psnr_ext"](pred_ext_all, gt_ext_all).item()
                     psnr_ext.append(psnr_single_img_ext)
@@ -275,27 +271,22 @@ class Renderer:
                         pred_ext_rgb = pred_ext_all[..., :3]
                         gt_ext_rgb = gt_ext_all[..., :3]
                         
-                        # Apply clamping for proper visualization
-                        pred_ext_rgb_clamped = pred_ext_rgb.clamp(0, 1)
-                        gt_ext_rgb_clamped = gt_ext_rgb.clamp(0, 1)
-                        
-                        pred_img_ext_to_write = pred_ext_rgb_clamped[-1]
-                        gt_img_ext_to_write = gt_ext_rgb_clamped[-1]
-                        
-                        # Save extended features images (first 3 components as RGB)
+                        # The values are already alpha composited with the background
                         torchvision.utils.save_image(
-                            pred_ext_rgb_clamped.squeeze(0).permute(2, 0, 1),
+                            pred_ext_rgb.squeeze(0).permute(2, 0, 1),
                             os.path.join(output_path_renders_ext, "{0:05d}".format(iteration) + ".png"),
                         )
-                        
-                        if self.save_gt:
-                            torchvision.utils.save_image(
-                                gt_ext_rgb_clamped.squeeze(0).permute(2, 0, 1),
-                                os.path.join(output_path_gt_ext, "{0:05d}".format(iteration) + ".png"),
-                            )
-                        
+                        pred_img_ext_to_write = pred_ext_rgb[-1].clip(0, 1.0)
+                        gt_img_ext_to_write = gt_ext_rgb[-1].clip(0, 1.0)
+
                         if self.writer is not None:
                             test_images_ext.append(pred_img_ext_to_write)
+
+                        if self.save_gt:
+                            torchvision.utils.save_image(
+                                gt_ext_rgb.squeeze(0).permute(2, 0, 1),
+                                os.path.join(output_path_gt_ext, "{0:05d}".format(iteration) + ".png"),
+                            )
                         
                         if psnr_single_img_ext > best_psnr_ext:
                             best_psnr_ext = psnr_single_img_ext

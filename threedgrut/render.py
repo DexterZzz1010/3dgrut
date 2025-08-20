@@ -31,7 +31,7 @@ from threedgrut.utils.misc import create_summary_writer
 
 class Renderer:
     def __init__(
-        self, model, conf, global_step, out_dir, path="", save_gt=True, writer=None, compute_extra_metrics=True
+        self, model, conf, global_step, out_dir, path="", save_gt=True, writer=None, compute_extra_metrics=True, extended_features_metrics=False
     ) -> None:
 
         if path:  # Replace the path to the test data
@@ -46,6 +46,7 @@ class Renderer:
         self.dataset, self.dataloader = self.create_test_dataloader(conf)
         self.writer = writer
         self.compute_extra_metrics = compute_extra_metrics
+        self.extended_features_metrics = extended_features_metrics
 
         if conf.model.background.color == "black":
             self.bg_color = torch.zeros((3,), dtype=torch.float32, device="cuda")
@@ -110,11 +111,12 @@ class Renderer:
             save_gt=save_gt,
             writer=writer,
             compute_extra_metrics=computes_extra_metrics,
+            extended_features_metrics=extended_features_metrics,
         )
 
     @classmethod
     def from_preloaded_model(
-        cls, model, out_dir, path="", save_gt=True, writer=None, global_step=None, compute_extra_metrics=False
+        cls, model, out_dir, path="", save_gt=True, writer=None, global_step=None, compute_extra_metrics=False, extended_features_metrics=False
     ):
         """Loads checkpoint for test path."""
 
@@ -131,6 +133,7 @@ class Renderer:
             save_gt=save_gt,
             writer=writer,
             compute_extra_metrics=compute_extra_metrics,
+            extended_features_metrics=extended_features_metrics,
         )
 
     @torch.no_grad()

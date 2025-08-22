@@ -1,0 +1,40 @@
+# @package _global_
+
+# Configuration for batch processing MipNeRF 360 scenes with C-RADIOv3 features and PCA compression
+
+# order in which configs override each other (/* - denotes a relative search path)
+defaults:
+  - _self_
+  - /dataset: colmap
+  - /features/extractors: nv_radio_v3
+  - /features/compressors: pca
+
+# Base path to MipNeRF 360 dataset directory (containing scene subdirectories)
+path: ???
+
+# MipNeRF 360 scenes and their downsample factors
+scenes:
+  bicycle:
+    downsample_factor: 4
+  bonsai:
+    downsample_factor: 2
+  counter:
+    downsample_factor: 2
+  flowers:
+    downsample_factor: 4
+  garden:
+    downsample_factor: 4
+  kitchen:
+    downsample_factor: 2
+  room:
+    downsample_factor: 2
+  stump:
+    downsample_factor: 4
+  treehill:
+    downsample_factor: 4
+
+# Batch processing settings
+skip_existing: false
+
+num_workers: 24
+random_dataset_sample: true

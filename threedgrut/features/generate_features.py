@@ -256,14 +256,9 @@ def extract_and_save_features(
             # For TensorBoard logging
             if writer is not None:
                 # Compute PSNR between original and compressed features
-                if hasattr(compressor, 'decoder'):
+                if hasattr(compressor, 'reconstruct_features'):
                     # For autoencoder, reconstruct features
-                    reconstructed = compressor.decoder(compressed)
-                    psnr = compute_reconstruction_psnr(features, reconstructed)
-                    psnr_values.append(psnr)
-                elif hasattr(compressor, 'decompress'):
-                    # For PCA, decompress features
-                    reconstructed = compressor.decompress(compressed)
+                    reconstructed = compressor.reconstruct_features(compressed)
                     psnr = compute_reconstruction_psnr(features, reconstructed)
                     psnr_values.append(psnr)
                 
@@ -274,10 +269,8 @@ def extract_and_save_features(
                         sample_images_original.append(original_img)
                         
                         # Get compressed version for visualization
-                        if hasattr(compressor, 'decoder'):
-                            reconstructed = compressor.decoder(compressed)
-                        elif hasattr(compressor, 'decompress'):
-                            reconstructed = compressor.decompress(compressed)
+                        if hasattr(compressor, 'reconstruct_features'):
+                            reconstructed = compressor.reconstruct_features(compressed)
                         else:
                             reconstructed = compressed  # For identity/skip compressor
                         

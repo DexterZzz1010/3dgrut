@@ -152,7 +152,7 @@ class Renderer:
         # Extended features criterions
         if self.extended_features_metrics:
             criterions |= {
-                "psnr_ext": PeakSignalNoiseRatio(data_range=1).to("cuda"),
+                "psnr_ext": PeakSignalNoiseRatio().to("cuda"),
             }
 
         output_path_renders = os.path.join(self.out_dir, f"ours_{int(self.global_step)}", "renders")

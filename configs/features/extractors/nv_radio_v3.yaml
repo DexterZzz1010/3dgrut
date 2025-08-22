@@ -1,0 +1,7 @@
+type: nv_radio
+# C-RADIOv3 model from Hugging Face
+# Available models: [c-radiov3-b, c-radiov3-l, c-radiov3-h, c-radiov3-g]
+# Model sizes: B=90M, L=320M, H=653M, g=1.2B parameters
+model_name: c-radiov3-h
+upscale_factor: 1  # Optional upscaling factor for input images
+device: cuda  # Device to run the model on

@@ -194,7 +194,27 @@ class PCAFeatureCompressor(FeatureCompressor):
         Returns:
             Reconstructed features of shape (..., feature_dim)
         """
-        return self.pca_components @ compressed
+        # Ensure PCA is computed
+        if self._needs_update:
+            self.compute_pca()
+            
+        # Ensure compressed features are 2D for reconstruction
+        original_shape = compressed.shape
+        compressed = compressed.reshape(-1, compressed.shape[-1])
+        
+        # Get the components that were used for compression
+        n_compressed_components = compressed.shape[-1]
+        if n_compressed_components > self.pca_components.shape[1]:
+            raise ValueError(f"Compressed features have {n_compressed_components} components but only {self.pca_components.shape[1]} available")
+        components = self.pca_components[:, :n_compressed_components]
+        
+        # Reconstruct: multiply by components transpose and add back mean
+        reconstructed = compressed @ components.T + self.running_mean
+        
+        # Restore original shape except for last dimension
+        reconstructed = reconstructed.reshape(*original_shape[:-1], self.feature_dim)
+        
+        return reconstructed
 
     @torch.no_grad()
     def forward(

@@ -1,4 +1,6 @@
 type: nv_radio
-model_name: radio_v2.5-h  # one of [radio_v1, radio_v2, radio_v2.1, radio_v2.5-h, radio_v2.5-l]
+# Legacy RADIO models (v1/v2/v2.5) from torch.hub: [radio_v1, radio_v2, radio_v2.1, radio_v2.5-h, radio_v2.5-l]
+# C-RADIOv3 models from Hugging Face: [c-radiov3-b, c-radiov3-l, c-radiov3-h, c-radiov3-g]
+model_name: radio_v2.5-h
 upscale_factor: 1  # Optional upscaling factor for input images
 device: cuda  # Device to run the model on

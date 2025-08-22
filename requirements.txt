@@ -30,3 +30,5 @@ pygltflib
 usd-core
 # feature extractor
 timm # torchHub dependency
+transformers # HuggingFace C-RADIOv3 models
+open-clip-torch # Required by C-RADIOv3 models internally

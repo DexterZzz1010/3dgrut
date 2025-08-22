@@ -1,0 +1,8 @@
+type: dinov3
+# DINOv3 models from Facebook Research
+# Available models: [dinov3_vits14, dinov3_vitb14, dinov3_vitl14, dinov3_vitg14]
+# Regularized variants: [dinov3_vits14_reg, dinov3_vitb14_reg, dinov3_vitl14_reg, dinov3_vitg14_reg]
+# Model sizes: ViT-S=22M, ViT-B=86M, ViT-L=304M, ViT-g=1.1B parameters
+model_name: dinov3_vitl14_reg
+upscale_factor: 1  # Optional upscaling factor for input images
+device: cuda  # Device to run the model on

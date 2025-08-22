@@ -15,6 +15,7 @@
 
 from omegaconf import DictConfig
 from .nv_radio_feature_extractor import NVRadioFeatureExtractor
+from .dinov3_feature_extractor import DINOv3FeatureExtractor
 
 def make_extractor(conf: DictConfig):
     """Create a feature extractor based on configuration.
@@ -30,5 +31,7 @@ def make_extractor(conf: DictConfig):
     """
     if conf.type == "nv_radio":
         return NVRadioFeatureExtractor(conf)
+    elif conf.type == "dinov3":
+        return DINOv3FeatureExtractor(conf)
     else:
         raise ValueError(f"Unknown extractor type: {conf.type}") 

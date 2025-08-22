@@ -4,6 +4,7 @@ type: autoencoder
 n_components: 32  # Number of compressed dimensions
 
 # Autoencoder-specific parameters
-hidden_dims: [512, 256, 128]  # Hidden layer dimensions (None for linear projection)
+# Directly reference n_components and multiply in the expression
+hidden_dims: [${eval:${n_components} * 16}, ${eval:${n_components} * 8}, ${eval:${n_components} * 4}]
 activation: relu  # Activation function (relu, leaky_relu, elu, gelu)
 dropout: 0.1  # Dropout rate (0 to disable) 

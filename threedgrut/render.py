@@ -273,7 +273,7 @@ class Renderer:
                         
                         # The values are already alpha composited with the background
                         torchvision.utils.save_image(
-                            pred_ext_rgb.squeeze(0).permute(2, 0, 1),
+                            pred_ext_rgb.squeeze(0).permute(2, 0, 1).clamp(0, 1.0),
                             os.path.join(output_path_renders_ext, "{0:05d}".format(iteration) + ".png"),
                         )
                         pred_img_ext_to_write = pred_ext_rgb[-1].clip(0, 1.0)
@@ -311,8 +311,6 @@ class Renderer:
                     rgb_gt_full.permute(0, 3, 1, 2),
                 ).item()
             )
-            
-
 
             # Record the time
             inference_time.append(outputs["frame_time_ms"])

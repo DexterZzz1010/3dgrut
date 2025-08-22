@@ -45,7 +45,7 @@ class FeatureDataset:
         feature_path = Path(self.conf.path) / "features"
         
         # Add extractor type to path
-        feature_path = feature_path / self.conf.features.extractors.type
+        feature_path = feature_path / self.conf.features.extractors.type / self.conf.features.extractors.model_name
         
         # Add compressor information if present
         if self.conf.features.compressors.type != "skip":

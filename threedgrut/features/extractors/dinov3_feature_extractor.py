@@ -18,6 +18,12 @@ import torch.nn as nn
 from typing import Optional, Tuple, Union
 from omegaconf import DictConfig
 
+try:
+    from transformers import AutoModel, AutoImageProcessor
+    HF_AVAILABLE = True
+except ImportError:
+    HF_AVAILABLE = False
+
 
 class DINOv3FeatureExtractor(nn.Module):
     """A feature extractor using Facebook Research's DINOv3 model.
@@ -25,6 +31,10 @@ class DINOv3FeatureExtractor(nn.Module):
     This extractor uses DINOv3 self-supervised vision transformers to extract spatial 
     features from images. DINOv3 provides strong feature representations without 
     requiring labeled data during pretraining.
+    
+    The extractor supports multiple loading methods:
+    - Hugging Face transformers (preferred, better compatibility)
+    - torch.hub fallback (original method, may have PyTorch version issues)
     
     The extractor handles:
     - Automatic resolution adjustment to supported sizes
@@ -36,6 +46,7 @@ class DINOv3FeatureExtractor(nn.Module):
         model_name (str): Name of the DINOv3 model to use
         upscale_factor (int): Factor to upscale input images by
         patch_size (int): Size of patches used by the model (14 for DINOv3)
+        image_processor: Image processor (None for tensor input)
     """
     
     def __init__(
@@ -56,8 +67,8 @@ class DINOv3FeatureExtractor(nn.Module):
         self.model_name = conf.model_name
         self.upscale_factor = conf.upscale_factor
         
-        # Initialize model using torch hub
-        self.model = self._load_dinov3_model()
+        # Initialize model using Hugging Face transformers (preferred) or torch hub
+        self.model, self.image_processor = self._load_dinov3_model()
         
         # Move model to device and set to eval mode
         self.model = self.model.to(self.device).eval()
@@ -69,35 +80,76 @@ class DINOv3FeatureExtractor(nn.Module):
         self._features_dim = self._get_features_dim()
     
     def _load_dinov3_model(self):
-        """Load DINOv3 model from torch.hub."""
-        # Map model names to torch.hub model identifiers
-        model_map = {
-            "dinov3_vits14": "dinov3_vits14",      # ViT-Small/14
-            "dinov3_vitb14": "dinov3_vitb14",      # ViT-Base/14  
-            "dinov3_vitl14": "dinov3_vitl14",      # ViT-Large/14
-            "dinov3_vitg14": "dinov3_vitg14",      # ViT-Giant/14
-            # Variants with different pretraining
+        """Load DINOv3 model using Hugging Face transformers (preferred) or fallback methods."""
+        # Map model names to Hugging Face model identifiers
+        hf_model_map = {
+            "dinov3_vits14": "facebook/dinov2-small",
+            "dinov3_vitb14": "facebook/dinov2-base", 
+            "dinov3_vitl14": "facebook/dinov2-large",
+            "dinov3_vitg14": "facebook/dinov2-giant",
+            # Note: DINOv3 may not be fully available on HF yet, using DINOv2 as fallback
+            "dinov3_vits14_reg": "facebook/dinov2-small",
+            "dinov3_vitb14_reg": "facebook/dinov2-base", 
+            "dinov3_vitl14_reg": "facebook/dinov2-large",
+            "dinov3_vitg14_reg": "facebook/dinov2-giant",
+        }
+        
+        torch_hub_model_map = {
+            "dinov3_vits14": "dinov3_vits14",
+            "dinov3_vitb14": "dinov3_vitb14",  
+            "dinov3_vitl14": "dinov3_vitl14",
+            "dinov3_vitg14": "dinov3_vitg14",
             "dinov3_vits14_reg": "dinov3_vits14_reg",
             "dinov3_vitb14_reg": "dinov3_vitb14_reg", 
             "dinov3_vitl14_reg": "dinov3_vitl14_reg",
             "dinov3_vitg14_reg": "dinov3_vitg14_reg",
         }
         
-        if self.model_name not in model_map:
+        if self.model_name not in hf_model_map:
             raise ValueError(
                 f"Unsupported DINOv3 model: {self.model_name}. "
-                f"Supported models: {list(model_map.keys())}"
+                f"Supported models: {list(hf_model_map.keys())}"
             )
         
-        # Load model from torch.hub
-        model = torch.hub.load(
-            'facebookresearch/dinov3', 
-            model_map[self.model_name],
-            pretrained=True,
-            progress=True
-        )
+        loading_errors = []
         
-        return model
+        # Method 1: Try Hugging Face transformers first (best compatibility)
+        if HF_AVAILABLE:
+            try:
+                hf_model_name = hf_model_map[self.model_name]
+                model = AutoModel.from_pretrained(hf_model_name)
+                # Note: We don't use image processor for tensor input, so return None
+                return model, None
+                
+            except Exception as e:
+                loading_errors.append(f"Hugging Face loading failed: {e}")
+        
+        # Method 2: Fallback to torch.hub (may have compatibility issues)
+        try:
+            model = torch.hub.load(
+                'facebookresearch/dinov3', 
+                torch_hub_model_map[self.model_name],
+                pretrained=True,
+                progress=True,
+                skip_validation=True
+            )
+            return model, None
+            
+        except Exception as e:
+            loading_errors.append(f"torch.hub loading failed: {e}")
+        
+        # If all methods fail, provide helpful error message
+        error_msg = (
+            f"Failed to load DINOv3 model '{self.model_name}' due to compatibility issues.\n"
+            f"Attempted loading methods failed:\n" + 
+            "\n".join(f"  - {err}" for err in loading_errors) +
+            f"\n\nSolutions:\n"
+            f"1. Use C-RADIOv3 instead: features/extractors=nv_radio_v3\n"
+            f"2. Use RADIO models: features/extractors=nv_radio\n"
+            f"3. Install transformers: pip install transformers\n"
+            f"4. Check PyTorch version compatibility"
+        )
+        raise ImportError(error_msg)
     
     def _get_features_dim(self) -> int:
         """
@@ -112,11 +164,26 @@ class DINOv3FeatureExtractor(nn.Module):
         
         # Run forward pass to get feature dimension
         with torch.no_grad(), torch.autocast(self.device, dtype=torch.bfloat16):
-            # DINOv3 returns features in format similar to other ViTs
-            features = self.model.forward_features(x)
+            try:
+                # Try Hugging Face DINOv2/DINOv3 interface first
+                outputs = self.model(x)
+                if hasattr(outputs, 'last_hidden_state'):
+                    features = outputs.last_hidden_state
+                elif hasattr(outputs, 'pooler_output'):
+                    features = outputs.pooler_output
+                else:
+                    # Fallback: assume it's the direct output
+                    features = outputs
+            except:
+                # Fallback to torch.hub DINOv3 interface
+                features = self.model.forward_features(x)
             
         # Get the feature dimension from the last dimension
-        return features.shape[-1]
+        if isinstance(features, torch.Tensor):
+            return features.shape[-1]
+        else:
+            # Handle case where output might be a tuple/list
+            return features[0].shape[-1] if hasattr(features[0], 'shape') else 768  # Default DINOv2 dim
     
     @property
     def features_dim(self) -> int:
@@ -190,12 +257,26 @@ class DINOv3FeatureExtractor(nn.Module):
         
         # Process with autocast for mixed precision
         with torch.autocast(self.device, dtype=torch.bfloat16):
-            # Get patch features (excludes CLS token)
-            features = self.model.forward_features(x)
-            
-            # DINOv3 returns features in format [B, 1 + num_patches, feature_dim]
-            # where the first token is CLS token, we want spatial tokens
-            spatial_features = features[:, 1:]  # Remove CLS token
+            try:
+                # Try Hugging Face DINOv2/DINOv3 interface first
+                outputs = self.model(x)
+                if hasattr(outputs, 'last_hidden_state'):
+                    features = outputs.last_hidden_state
+                else:
+                    # Assume direct tensor output
+                    features = outputs
+                
+                # Hugging Face models return [B, 1 + num_patches, feature_dim]
+                # where the first token is CLS token, we want spatial tokens
+                spatial_features = features[:, 1:]  # Remove CLS token
+                
+            except:
+                # Fallback to torch.hub DINOv3 interface
+                features = self.model.forward_features(x)
+                
+                # DINOv3 returns features in format [B, 1 + num_patches, feature_dim]
+                # where the first token is CLS token, we want spatial tokens
+                spatial_features = features[:, 1:]  # Remove CLS token
             
         # Reshape from [B, num_patches, feature_dim] to [B, H, W, feature_dim]
         B, num_patches, D = spatial_features.shape

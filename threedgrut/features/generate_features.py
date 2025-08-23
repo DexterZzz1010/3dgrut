@@ -46,7 +46,7 @@ def create_sample_image_tensor(features, max_samples=8):
     Returns:
         Image tensor [N, 3, H, W] clamped to [0, 1] for visualization
     """
-    if features.shape[-1] < 3:
+    if feature is None or features.shape[-1] < 3:
         return None
     
     # Take first 3 components and clamp to [0, 1]
@@ -239,6 +239,7 @@ def extract_and_save_features(
     compressor.eval()
     psnr_values = []
     sample_images_original = []
+    sample_images_reconstructed = []
     sample_images_compressed = []
     
     with torch.no_grad():
@@ -255,9 +256,9 @@ def extract_and_save_features(
             
             # For TensorBoard logging
             if writer is not None:
-                # Compute PSNR between original and compressed features
+            
+                reconstructed = None
                 if hasattr(compressor, 'reconstruct_features'):
-                    # For autoencoder, reconstruct features
                     reconstructed = compressor.reconstruct_features(compressed)
                     psnr = compute_reconstruction_psnr(features, reconstructed)
                     psnr_values.append(psnr)
@@ -268,13 +269,11 @@ def extract_and_save_features(
                     if original_img is not None:
                         sample_images_original.append(original_img)
                         
-                        # Get compressed version for visualization
-                        if hasattr(compressor, 'reconstruct_features'):
-                            reconstructed = compressor.reconstruct_features(compressed)
-                        else:
-                            reconstructed = compressed  # For identity/skip compressor
-                        
-                        compressed_img = create_sample_image_tensor(reconstructed, max_samples=1)
+                        reconstructed_img = create_sample_image_tensor(reconstructed, max_samples=1)
+                        if reconstructed_img is not None:
+                            sample_images_reconstructed.append(reconstructed_img)
+
+                        compressed_img = create_sample_image_tensor(compressed, max_samples=1)
                         if compressed_img is not None:
                             sample_images_compressed.append(compressed_img)
     
@@ -287,14 +286,20 @@ def extract_and_save_features(
             writer.add_scalar(f'PSNR/final_mean_{split_name}', mean_psnr, 0)
         
         # Log sample images
-        if sample_images_original and sample_images_compressed:
+        if sample_images_original:
             original_grid = torch.cat(sample_images_original, dim=0)
-            compressed_grid = torch.cat(sample_images_compressed, dim=0)
-            
             writer.add_images(f'Samples/{split_name}_original_features', original_grid, 0)
-            writer.add_images(f'Samples/{split_name}_compressed_features', compressed_grid, 0)
-            
             logger.info(f"Logged {len(sample_images_original)} sample images to TensorBoard")
+
+        if sample_images_compressed:
+            compressed_grid = torch.cat(sample_images_compressed, dim=0)
+            writer.add_images(f'Samples/{split_name}_compressed_features', compressed_grid, 0)
+            logger.info(f"Logged {len(sample_images_compressed)} compressed sample images to TensorBoard")
+
+        if sample_images_reconstructed:
+            reconstructed_grid = torch.cat(sample_images_reconstructed, dim=0)
+            writer.add_images(f'Samples/{split_name}_reconstructed_features', reconstructed_grid, 0)
+            logger.info(f"Logged {len(sample_images_reconstructed)} reconstructed sample images to TensorBoard")
 
     # Delete dataloader
     del dataloader

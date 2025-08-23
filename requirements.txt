@@ -29,6 +29,6 @@ pygltflib
 # kaolin==0.17.0
 usd-core
 # feature extractor
-timm # torchHub dependency
+timm # torchHub dependency & DINOv3 compatibility fallback
 transformers # HuggingFace C-RADIOv3 models
 open-clip-torch # Required by C-RADIOv3 models internally

@@ -268,16 +268,23 @@ class Renderer:
                     
                     # For visualization, use only first 3 components if available
                     if n_extended_features >= 3:
-                        pred_ext_rgb = pred_ext_all[..., :3]
                         gt_ext_rgb = gt_ext_all[..., :3]
+                        # min-max normalize
+                        gt_ext_rgb_min, gt_ext_rgb_max = gt_ext_rgb.aminmax()
+                        gt_ext_rgb = (gt_ext_rgb - gt_ext_rgb_min) / (gt_ext_rgb_max - gt_ext_rgb_min)
+                        
+                        pred_ext_rgb = pred_ext_all[..., :3]
+                        # min-max normalize
+                        pred_ext_rgb_min, pred_ext_rgb_max = pred_ext_rgb.aminmax()
+                        pred_ext_rgb = (pred_ext_rgb - pred_ext_rgb_min) / (pred_ext_rgb_max - pred_ext_rgb_min)
                         
                         # The values are already alpha composited with the background
                         torchvision.utils.save_image(
-                            pred_ext_rgb.squeeze(0).permute(2, 0, 1).clamp(0, 1.0),
+                            pred_ext_rgb.squeeze(0).permute(2, 0, 1),
                             os.path.join(output_path_renders_ext, "{0:05d}".format(iteration) + ".png"),
                         )
-                        pred_img_ext_to_write = pred_ext_rgb[-1].clip(0, 1.0)
-                        gt_img_ext_to_write = gt_ext_rgb[-1].clip(0, 1.0)
+                        pred_img_ext_to_write = pred_ext_rgb[-1]
+                        gt_img_ext_to_write = gt_ext_rgb[-1]
 
                         if self.writer is not None:
                             test_images_ext.append(pred_img_ext_to_write)

@@ -5,6 +5,6 @@ n_components: 32  # Number of compressed dimensions
 
 # Autoencoder-specific parameters
 # Directly reference n_components and multiply in the expression
-hidden_dims: [${eval:${n_components} * 16}, ${eval:${n_components} * 8}, ${eval:${n_components} * 4}]
+hidden_dims: [512, 256, 128]  # ${n_components} * [16, 8, 4] = [32*16, 32*8, 32*4]
 activation: relu  # Activation function (relu, leaky_relu, elu, gelu)
 dropout: 0.1  # Dropout rate (0 to disable) 

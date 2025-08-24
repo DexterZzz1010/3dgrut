@@ -44,13 +44,17 @@ def create_sample_image_tensor(features, max_samples=8):
         max_samples: Maximum number of samples to include
         
     Returns:
-        Image tensor [N, 3, H, W] clamped to [0, 1] for visualization
+        Image tensor [N, 3, H, W] normalized to [0, 1] for visualization
     """
-    if feature is None or features.shape[-1] < 3:
+    if features is None or features.shape[-1] < 3:
         return None
     
-    # Take first 3 components and clamp to [0, 1]
-    rgb_features = features[..., :3].clamp(0, 1)
+    # Take first 3 components
+    rgb_features = features[..., :3]
+
+    # Min-max normalize
+    min_val, max_val = rgb_features.aminmax()
+    rgb_features = (rgb_features - min_val) / (max_val - min_val)
     
     # Take up to max_samples
     n_samples = min(max_samples, rgb_features.shape[0])

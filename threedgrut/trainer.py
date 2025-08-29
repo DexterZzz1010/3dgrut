@@ -44,6 +44,7 @@ from threedgrut.utils.gui import GUI
 from threedgrut.utils.logger import logger
 from threedgrut.utils.timer import CudaTimer
 from threedgrut.utils.misc import jet_map, create_summary_writer, check_step_condition
+from threedgrut.utils.downsampling import downsample_features_bhwc
 from threedgrut.optimizers import SelectiveAdam
 
 class Trainer3DGRUT:
@@ -251,7 +252,7 @@ class Trainer3DGRUT:
                     observer_points = torch.tensor(
                         train_dataset.get_observer_points(), dtype=torch.float32, device=self.device
                     )
-                    model.init_from_colmap(conf.path, observer_points)
+                    model.init_from_colmap(conf.path, conf.dataset.calibration_dir, observer_points)
                 case "point_cloud":
                     try:
                         ply_path = os.path.join(conf.path, "point_cloud.ply")
@@ -436,11 +437,20 @@ class Trainer3DGRUT:
                     pred_extended_features = pred_extended_features * mask
                 # Resize predicted features to match ground truth size if needed
                 if pred_extended_features.shape != extended_features_gt.shape:
-                    pred_extended_features = torch.nn.functional.interpolate(
-                        pred_extended_features.permute(0, 3, 1, 2),  # [B, C, H, W]
-                        size=extended_features_gt.shape[1:3],
-                        mode='area'
-                    ).permute(0, 2, 3, 1)  # Back to [B, H, W, C]
+                    downsampling_method = getattr(self.conf.loss, 'extended_features_downsampling_method', 'antialiased')
+                    if downsampling_method == 'area':
+                        # Fallback to old method if specified
+                        pred_extended_features = torch.nn.functional.interpolate(
+                            pred_extended_features.permute(0, 3, 1, 2),  # [B, C, H, W]
+                            size=extended_features_gt.shape[1:3],
+                            mode='area'
+                        ).permute(0, 2, 3, 1)  # Back to [B, H, W, C]
+                    else:
+                        pred_extended_features = downsample_features_bhwc(
+                            pred_extended_features,
+                            target_shape=extended_features_gt.shape[1:3],
+                            method=downsampling_method
+                        )
                 #loss_extended_features = torch.nn.functional.mse_loss(pred_extended_features, extended_features_gt)
                 loss_extended_features = torch.nn.functional.l1_loss(pred_extended_features, extended_features_gt)
                 lambda_extended_features = self.conf.loss.lambda_extended_features

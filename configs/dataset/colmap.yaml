@@ -1,4 +1,5 @@
 type: colmap
+calibration_dir: sparse/0
 downsample_factor: 1
 test_split_interval: 8
 load_features: false

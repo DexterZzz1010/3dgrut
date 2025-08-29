@@ -256,11 +256,21 @@ class Renderer:
                     
                     # Resize predicted features to match ground truth size if needed (same as trainer.py)
                     if pred_ext_all.shape != gt_ext_all.shape:
-                        pred_ext_all = torch.nn.functional.interpolate(
-                            pred_ext_all.permute(0, 3, 1, 2),  # [B, C, H, W]
-                            size=gt_ext_all.shape[1:3],
-                            mode='area'
-                        ).permute(0, 2, 3, 1)  # Back to [B, H, W, C]
+                        downsampling_method = getattr(self.conf.loss, 'extended_features_downsampling_method', 'antialiased')
+                        if downsampling_method == 'area':
+                            # Fallback to old method if specified
+                            pred_ext_all = torch.nn.functional.interpolate(
+                                pred_ext_all.permute(0, 3, 1, 2),  # [B, C, H, W]
+                                size=gt_ext_all.shape[1:3],
+                                mode='area'
+                            ).permute(0, 2, 3, 1)  # Back to [B, H, W, C]
+                        else:
+                            from threedgrut.utils.downsampling import downsample_features_bhwc
+                            pred_ext_all = downsample_features_bhwc(
+                                pred_ext_all,
+                                target_shape=gt_ext_all.shape[1:3],
+                                method=downsampling_method
+                            )
                     
                     # Compute PSNR using all feature components
                     psnr_single_img_ext = criterions["psnr_ext"](pred_ext_all, gt_ext_all).item()

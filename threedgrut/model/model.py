@@ -234,7 +234,7 @@ class MixtureOfGaussians(torch.nn.Module, ExportableModel):
 
         assert self.extended_features.shape == (num_gaussians, self.conf.model.extended_features.dim)
 
-    def init_from_colmap(self, root_path: str, observer_pts):
+    def init_from_colmap(self, root_path: str, calibration_dir: str, observer_pts):
         # Special case for scannetpp dataset
         if self.conf.dataset.type == "scannetpp":
             points_file = os.path.join(root_path, "colmap", "points3D.txt")
@@ -243,10 +243,10 @@ class MixtureOfGaussians(torch.nn.Module, ExportableModel):
             file_rgb = torch.tensor(rgb, dtype=torch.uint8, device=self.device)
 
         else:
-            points_file = os.path.join(root_path, "sparse/0", "points3D.bin")
+            points_file = os.path.join(root_path, calibration_dir, "points3D.bin")
             # also handle nonbinary points files
             if not os.path.isfile(points_file):
-                points_file = os.path.join(root_path, "sparse/0", "points3D.txt")
+                points_file = os.path.join(root_path, calibration_dir, "points3D.txt")
                 pts, rgb, _ = read_colmap_points3D_text(points_file)
                 file_pts = torch.tensor(pts, dtype=torch.float32, device=self.device)
                 file_rgb = torch.tensor(rgb, dtype=torch.uint8, device=self.device)

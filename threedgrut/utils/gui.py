@@ -330,7 +330,9 @@ class GUI:
 
         elif style == "extended_features" and (sple_oext.shape[-1] >= 3):
             # Apply clamping for proper visualization and take first 3 components
-            sple_oext_clamped = sple_oext[...,:3].clamp(0, 1)
+            sple_oext_rgb = sple_oext[..., :3]
+            min_val, max_val = sple_oext_rgb.aminmax()
+            sple_oext_clamped = (sple_oext_rgb - min_val) / (max_val - min_val + 1e-8)
             # append 1s for alpha
             sple_oext = torch.cat((sple_oext_clamped, torch.ones_like(sple_orad[:, :, :, 0:1])), dim=-1)
             if self.update_from_device:

@@ -62,6 +62,7 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, Feat
         FeatureDataset.__init__(self, config)
 
         self.path = config.path
+        self.calibration_dir = config.dataset.calibration_dir
         self.device = device
         self.split = split
         self.downsample_factor = config.dataset.downsample_factor
@@ -106,13 +107,13 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, Feat
 
     def load_intrinsics_and_extrinsics(self):
         try:
-            cameras_extrinsic_file = os.path.join(self.path, "sparse/0", "images.bin")
-            cameras_intrinsic_file = os.path.join(self.path, "sparse/0", "cameras.bin")
+            cameras_extrinsic_file = os.path.join(self.path, self.calibration_dir, "images.bin")
+            cameras_intrinsic_file = os.path.join(self.path, self.calibration_dir, "cameras.bin")
             self.cam_extrinsics = read_colmap_extrinsics_binary(cameras_extrinsic_file)
             self.cam_intrinsics = read_colmap_intrinsics_binary(cameras_intrinsic_file)
         except:
-            cameras_extrinsic_file = os.path.join(self.path, "sparse/0", "images.txt")
-            cameras_intrinsic_file = os.path.join(self.path, "sparse/0", "cameras.txt")
+            cameras_extrinsic_file = os.path.join(self.path, self.calibration_dir, "images.txt")
+            cameras_intrinsic_file = os.path.join(self.path, self.calibration_dir, "cameras.txt")
             self.cam_extrinsics = read_colmap_extrinsics_text(cameras_extrinsic_file)
             self.cam_intrinsics = read_colmap_intrinsics_text(cameras_intrinsic_file)
 
@@ -211,10 +212,10 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, Feat
                 with Image.open(image_path) as img:
                     width, height = img.size
             except FileNotFoundError:
-                logger.error(
+                width, height = full_width, full_height
+                logger.warning(
                     f"Image {image_path} not found. Cannot determine dimensions for intrinsic ID {intr.id}."
                 )
-                continue
 
             # Calculate scaling factor to match the image dimensions to the intrinsic dimensions
             scaling_factor = int(round(intr.height / height))
@@ -461,6 +462,15 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, Feat
             image_data = np.asarray(Image.open(self.image_paths[i_cam]))
             h, w = image_data.shape[:2]
 
+            features_gt = self.load_features(self.image_paths[i_cam])
+            if features_gt is not None:
+                # Reduce features_gt to first 3 channels and min/max normalize per channel
+                features_gt = features_gt[..., :3].squeeze()
+                min_val = features_gt.min()
+                max_val = features_gt.max()
+                features_gt = (features_gt - min_val) / (max_val - min_val)
+
+
             f_w = intr["focal_length"][0]
             f_h = intr["focal_length"][1]
 
@@ -480,7 +490,7 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, Feat
                     "h": h,
                     "fov_w": fov_w,
                     "fov_h": fov_h,
-                    "rgb_img": rgb,
+                    "rgb_img": features_gt if features_gt is not None else rgb,
                     "split": self.split,
                 }
             )

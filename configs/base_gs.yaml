@@ -141,6 +141,7 @@ loss:
 
   use_extended_features: ${gt:${model.extended_features.dim},0}
   lambda_extended_features: 1.0
+  extended_features_downsampling_method: "antialiased"  # one of ["antialiased", "adaptive", "bicubic", "area"]
 
 hydra:
   output_subdir: null

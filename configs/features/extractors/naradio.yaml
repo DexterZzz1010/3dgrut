@@ -1,0 +1,15 @@
+type: naradio
+# RADIO model version to use as backbone
+model_name: radio_v2.5-b  # Choose from: radio_v2.5-b, radio_v2.5-l, radio_v2.5-h, radio_v2.5-g
+# Gaussian kernel parameters
+gauss_std: 7.0  # Standard deviation for Gaussian kernel attention
+# Language alignment settings
+lang_model: siglip  # Choose from: siglip, clip
+return_radio_features: true  # If false, directly return language-aligned features
+# Optional parameters
+upscale_factor: 1  # Factor to upscale input images
+compile: false  # Whether to compile the model for speed (may increase memory usage)
+amp: true  # Whether to use automatic mixed precision
+device: cuda  # Device to run the model on
+# Note: NARadio now supports dynamic input resolutions like regular RADIO
+# The Gaussian kernel attention matrices are computed dynamically based on input size

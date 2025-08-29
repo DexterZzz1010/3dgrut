@@ -68,6 +68,9 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, Feat
         self.downsample_factor = config.dataset.downsample_factor
         self.ray_jitter = ray_jitter
         self.test_split_interval = config.dataset.test_split_interval
+        # Option to save downsampled images for future use (defaults to True if not specified)
+        self.save_downsampled_images = config.dataset.save_downsampled_images
+        self.downsample_filter = getattr(Image, config.dataset.downsample_method.upper(), Image.LANCZOS)
 
         # Worker-based GPU cache for multiprocessing compatibility
         self._worker_gpu_cache = {}
@@ -104,6 +107,88 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, Feat
 
         # Clear existing worker caches to force recreation with new intrinsics
         self._worker_gpu_cache.clear()
+
+    def _downsample_image(self, image, downsample_factor):
+        """Downsample an image with antialiasing using configurable resampling method."""
+        if downsample_factor == 1:
+            return image
+        
+        original_size = image.size
+        new_size = (
+            original_size[0] // downsample_factor,
+            original_size[1] // downsample_factor
+        )
+        return image.resize(new_size, self.downsample_filter)
+
+    def _extract_relative_image_name(self, image_path):
+        """Extract the relative image name from a full image path."""
+        # Remove the dataset path and images folder to get the relative name
+        downsample_folder = self.get_images_folder()
+        expected_prefix = os.path.join(self.path, downsample_folder)
+        
+        if image_path.startswith(expected_prefix):
+            # Remove the prefix and any leading separator
+            relative_name = os.path.relpath(image_path, expected_prefix)
+            return relative_name
+        else:
+            # Fallback to basename if path structure is unexpected
+            relative_name = os.path.basename(image_path)
+            return relative_name
+
+    def _load_image_with_fallback(self, image_name, save_downsampled=True):
+        """
+        Load an image with fallback to full-resolution if downsampled version doesn't exist.
+        
+        Args:
+            image_name: Name of the image file
+            save_downsampled: Whether to save the downsampled image for future use
+            
+        Returns:
+            PIL.Image: The loaded (and potentially downsampled) image
+        """
+        # First try to load from the downsampled folder
+        downsample_folder = self.get_images_folder()
+        downsampled_path = os.path.join(self.path, downsample_folder, image_name)
+        
+        if os.path.exists(downsampled_path):
+            return Image.open(downsampled_path)
+        
+        # Fallback to full-resolution image
+        full_res_path = os.path.join(self.path, "images", image_name)
+        if not os.path.exists(full_res_path):
+            # Add more detailed error information for debugging
+            logger.error(f"Image loading failed for: {image_name}")
+            logger.error(f"  Tried downsampled: {downsampled_path} (exists: {os.path.exists(downsampled_path)})")
+            logger.error(f"  Tried full-res: {full_res_path} (exists: {os.path.exists(full_res_path)})")
+            logger.error(f"  Dataset path: {self.path}")
+            logger.error(f"  Images folder: {downsample_folder}")
+            raise FileNotFoundError(f"Neither downsampled ({downsampled_path}) nor full-resolution ({full_res_path}) image found")
+        
+        logger.info(f"Downsampled image not found at {downsampled_path}, loading from full-resolution and downsampling")
+        
+        # Load full-resolution image
+        full_res_image = Image.open(full_res_path)
+        
+        # Downsample if needed
+        if self.downsample_factor > 1:
+            downsampled_image = self._downsample_image(full_res_image, self.downsample_factor)
+            
+            # Save downsampled image if requested
+            if save_downsampled:
+                self._save_downsampled_image(downsampled_image, downsampled_path)
+            
+            return downsampled_image
+        else:
+            return full_res_image
+
+    def _save_downsampled_image(self, image, save_path):
+        """Save a downsampled image, creating the directory if necessary."""
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            image.save(save_path)
+        except Exception as e:
+            logger.warning(f"Failed to save downsampled image to {save_path}: {e}")
 
     def load_intrinsics_and_extrinsics(self):
         try:
@@ -205,16 +290,16 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, Feat
 
             image_name = cam_id_to_image_name[intr.id]
             image_name = os.path.join(os.path.split(image_name)[1], '') if self.get_images_folder() in image_name else image_name
-            image_path = os.path.join(self.path, self.get_images_folder(), image_name)
 
             try:
-                # Load the image to get its actual dimensions
-                with Image.open(image_path) as img:
-                    width, height = img.size
+                # Load the image with fallback to get its actual dimensions
+                img = self._load_image_with_fallback(image_name, save_downsampled=self.save_downsampled_images)
+                width, height = img.size
+                img.close()
             except FileNotFoundError:
                 width, height = full_width, full_height
                 logger.warning(
-                    f"Image {image_path} not found. Cannot determine dimensions for intrinsic ID {intr.id}."
+                    f"Image {image_name} not found in either downsampled or full-resolution folders. Cannot determine dimensions for intrinsic ID {intr.id}."
                 )
 
             # Calculate scaling factor to match the image dimensions to the intrinsic dimensions
@@ -363,8 +448,11 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, Feat
         return self.n_frames
 
     def __getitem__(self, idx) -> dict:
-        # Load image and get its actual dimensions
-        image_data = np.asarray(Image.open(self.image_paths[idx]))
+        # Load image with fallback and get its actual dimensions
+        image_name = self._extract_relative_image_name(self.image_paths[idx])
+        image = self._load_image_with_fallback(image_name, save_downsampled=self.save_downsampled_images)
+        image_data = np.asarray(image)
+        image.close()
         actual_h, actual_w = image_data.shape[:2]
 
         # Use actual image dimensions for output shape
@@ -458,8 +546,11 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization, Feat
             camera_id = self.get_intrinsics_idx(i_cam)
             intr, _, _, _ = self.intrinsics[camera_id]
 
-            # Load actual image to get dimensions
-            image_data = np.asarray(Image.open(self.image_paths[i_cam]))
+            # Load actual image with fallback to get dimensions
+            image_name = self._extract_relative_image_name(self.image_paths[i_cam])
+            image = self._load_image_with_fallback(image_name, save_downsampled=self.save_downsampled_images)
+            image_data = np.asarray(image)
+            image.close()
             h, w = image_data.shape[:2]
 
             features_gt = self.load_features(self.image_paths[i_cam])

@@ -1,5 +1,7 @@
 type: colmap
 calibration_dir: sparse/0
 downsample_factor: 1
+save_downsampled_images: false
+downsample_method: "lanczos" # "lanczos", "bicubic", "hamming" or "box"
 test_split_interval: 8
 load_features: false

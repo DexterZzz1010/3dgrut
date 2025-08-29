@@ -44,7 +44,7 @@ from threedgrut.utils.gui import GUI
 from threedgrut.utils.logger import logger
 from threedgrut.utils.timer import CudaTimer
 from threedgrut.utils.misc import jet_map, create_summary_writer, check_step_condition
-from threedgrut.utils.downsampling import downsample_features_bhwc
+from threedgrut.utils.downsampling import downsample_features_bhwc, compute_spatial_regularization_loss
 from threedgrut.optimizers import SelectiveAdam
 
 class Trainer3DGRUT:
@@ -451,9 +451,34 @@ class Trainer3DGRUT:
                             target_shape=extended_features_gt.shape[1:3],
                             method=downsampling_method
                         )
+                
                 #loss_extended_features = torch.nn.functional.mse_loss(pred_extended_features, extended_features_gt)
                 loss_extended_features = torch.nn.functional.l1_loss(pred_extended_features, extended_features_gt)
                 lambda_extended_features = self.conf.loss.lambda_extended_features
+
+        # Spatial regularization loss for extended features
+        loss_extended_features_spatial_regularization = torch.zeros(1, device=self.device)
+        lambda_extended_features_spatial_regularization = 0.0
+        if self.conf.loss.use_extended_features and self.conf.loss.use_extended_features_spatial_regularization:
+            assert gpu_batch.features_gt is not None, "missing features_gt in gpu_batch"
+            assert "pred_extended_features" in outputs, "missing extended_features in outputs"
+            with torch.cuda.nvtx.range(f"loss-spatial-regularization"):
+                pred_extended_features = outputs["pred_extended_features"]
+                extended_features_gt = gpu_batch.features_gt
+                # Apply mask if provided
+                if mask is not None:
+                    pred_extended_features = pred_extended_features * mask
+                
+                # Compute spatial regularization based on downsampling extent
+                sigma_factor = self.conf.loss.extended_features_spatial_regularization_sigma_factor
+                loss_type = self.conf.loss.extended_features_spatial_regularization_loss_type
+                loss_extended_features_spatial_regularization = compute_spatial_regularization_loss(
+                    pred_extended_features,
+                    target_shape=extended_features_gt.shape[1:3],
+                    sigma_factor=sigma_factor,
+                    loss_type=loss_type
+                )
+                lambda_extended_features_spatial_regularization = self.conf.loss.lambda_extended_features_spatial_regularization
 
         # DSSIM loss
         loss_ssim = torch.zeros(1, device=self.device)
@@ -482,8 +507,17 @@ class Trainer3DGRUT:
                 lambda_scale = self.conf.loss.lambda_scale
 
         # Total loss
-        loss = lambda_l1 * loss_l1 + lambda_l2 * loss_l2 + lambda_ssim * loss_ssim + lambda_opacity * loss_opacity + lambda_scale * loss_scale + lambda_extended_features * loss_extended_features
-        return dict(total_loss=loss, extended_features_loss=lambda_extended_features * loss_extended_features, l1_loss=lambda_l1 * loss_l1, l2_loss=lambda_l2 * loss_l2, ssim_loss=lambda_ssim * loss_ssim, opacity_loss=lambda_opacity * loss_opacity, scale_loss=lambda_scale * loss_scale)
+        loss = lambda_l1 * loss_l1 + lambda_l2 * loss_l2 + lambda_ssim * loss_ssim + lambda_opacity * loss_opacity + lambda_scale * loss_scale + lambda_extended_features * loss_extended_features + lambda_extended_features_spatial_regularization * loss_extended_features_spatial_regularization
+        return dict(
+            total_loss=loss, 
+            extended_features_loss=lambda_extended_features * loss_extended_features, 
+            extended_features_spatial_regularization_loss=lambda_extended_features_spatial_regularization * loss_extended_features_spatial_regularization,
+            l1_loss=lambda_l1 * loss_l1, 
+            l2_loss=lambda_l2 * loss_l2, 
+            ssim_loss=lambda_ssim * loss_ssim, 
+            opacity_loss=lambda_opacity * loss_opacity, 
+            scale_loss=lambda_scale * loss_scale
+        )
 
     @torch.cuda.nvtx.range("log_validation_iter")
     def log_validation_iter(
@@ -562,6 +596,9 @@ class Trainer3DGRUT:
         if self.conf.loss.use_extended_features:
             extended_features_loss = np.mean(metrics["losses"]["extended_features_loss"])
             writer.add_scalar("loss/extended_features/val", extended_features_loss, global_step)
+        if self.conf.loss.use_extended_features and self.conf.loss.use_extended_features_spatial_regularization:
+            extended_features_spatial_regularization_loss = np.mean(metrics["losses"]["extended_features_spatial_regularization_loss"])
+            writer.add_scalar("loss/extended_features_spatial_regularization/val", extended_features_spatial_regularization_loss, global_step)
 
         table = {k: np.mean(v) for k, v in metrics.items() if k in ("psnr", "ssim", "lpips")}
         for time_key in mean_timings:
@@ -598,6 +635,9 @@ class Trainer3DGRUT:
             if self.conf.loss.use_extended_features:
                 extended_features_loss = np.mean(batch_metrics["losses"]["extended_features_loss"])
                 writer.add_scalar("loss/extended_features/train", extended_features_loss, global_step)
+            if self.conf.loss.use_extended_features and self.conf.loss.use_extended_features_spatial_regularization:
+                extended_features_spatial_regularization_loss = np.mean(batch_metrics["losses"]["extended_features_spatial_regularization_loss"])
+                writer.add_scalar("loss/extended_features_spatial_regularization/train", extended_features_spatial_regularization_loss, global_step)
             if self.conf.loss.use_ssim:
                 ssim_loss = np.mean(batch_metrics["losses"]["ssim_loss"])
                 writer.add_scalar("loss/ssim/train", ssim_loss, global_step)

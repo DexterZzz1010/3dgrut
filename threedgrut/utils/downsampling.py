@@ -245,3 +245,104 @@ def downsample_features_bhwc(
     
     # Convert back to BHWC
     return downsampled_bchw.permute(0, 2, 3, 1)
+
+
+def compute_spatial_regularization_loss(
+    pred_features: torch.Tensor,
+    target_shape: Tuple[int, int],
+    sigma_factor: float = 0.5,
+    loss_type: str = "l2"
+) -> torch.Tensor:
+    """
+    Compute spatial regularization loss that encourages similar features for nearby pixels.
+    
+    The spatial extent of the regularization correlates with the downsampling factor:
+    - Larger downsampling ratios use larger regularization kernels
+    - This prevents multiple high-resolution predictions from mapping to the same ground truth
+    
+    Args:
+        pred_features (torch.Tensor): Predicted features in BHWC format
+        target_shape (Tuple[int, int]): Target ground truth shape (height, width)
+        sigma_factor (float): Factor to scale the regularization sigma. Higher values = more smoothing
+        loss_type (str): Type of loss to use ("l1" or "l2")
+        
+    Returns:
+        torch.Tensor: Spatial regularization loss (scalar)
+    """
+    B, H, W, C = pred_features.shape
+    target_h, target_w = target_shape
+    
+    # Compute downsampling scale factors
+    scale_h = H / target_h
+    scale_w = W / target_w
+    max_scale = max(scale_h, scale_w)
+    
+    # If no downsampling, return zero loss
+    if max_scale <= 1.0:
+        return torch.tensor(0.0, device=pred_features.device, dtype=pred_features.dtype)
+    
+    # Compute regularization sigma based on downsampling scale
+    # Similar to anti-aliasing sigma computation but scaled by sigma_factor
+    sigma_h = sigma_factor * max(0.5, (scale_h - 1) / 2)
+    sigma_w = sigma_factor * max(0.5, (scale_w - 1) / 2)
+    sigma = max(sigma_h, sigma_w)
+    
+    # Compute kernel size (odd number, ~3 standard deviations)
+    kernel_size = int(math.ceil(6 * sigma)) | 1
+    kernel_size = max(3, kernel_size)
+    
+    # Convert BHWC to BCHW for convolution
+    features_bchw = pred_features.permute(0, 3, 1, 2)
+    
+    # Get cached Gaussian kernels for smoothing
+    device = pred_features.device
+    dtype = pred_features.dtype
+    kernel_h, kernel_v = _get_cached_gaussian_kernel_1d(sigma, kernel_size, C, device, dtype)
+    
+    # Apply separable Gaussian smoothing
+    padding = kernel_size // 2
+    
+    # Horizontal pass
+    padded_h = F.pad(features_bchw, (padding, padding, 0, 0), mode='replicate')
+    smoothed = F.conv2d(padded_h, kernel_h, padding=0, groups=C)
+    
+    # Vertical pass
+    padded_v = F.pad(smoothed, (0, 0, padding, padding), mode='replicate')
+    smoothed = F.conv2d(padded_v, kernel_v, padding=0, groups=C)
+    
+    # Convert back to BHWC
+    smoothed_features = smoothed.permute(0, 2, 3, 1)
+    
+    # Compute regularization loss between original and smoothed features
+    if loss_type == "l1":
+        reg_loss = F.l1_loss(pred_features, smoothed_features)
+    elif loss_type == "l2":
+        reg_loss = F.mse_loss(pred_features, smoothed_features)
+    else:
+        raise ValueError(f"Unknown loss_type: {loss_type}. Use 'l1' or 'l2'")
+    
+    return reg_loss
+
+
+def get_downsampling_scale_factors(
+    pred_shape: Tuple[int, int], 
+    target_shape: Tuple[int, int]
+) -> Tuple[float, float, float]:
+    """
+    Compute downsampling scale factors for spatial regularization.
+    
+    Args:
+        pred_shape (Tuple[int, int]): Predicted features shape (height, width)
+        target_shape (Tuple[int, int]): Target ground truth shape (height, width)
+        
+    Returns:
+        Tuple[float, float, float]: (scale_h, scale_w, max_scale)
+    """
+    pred_h, pred_w = pred_shape
+    target_h, target_w = target_shape
+    
+    scale_h = pred_h / target_h
+    scale_w = pred_w / target_w
+    max_scale = max(scale_h, scale_w)
+    
+    return scale_h, scale_w, max_scale

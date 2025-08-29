@@ -142,6 +142,11 @@ loss:
   use_extended_features: ${gt:${model.extended_features.dim},0}
   lambda_extended_features: 1.0
   extended_features_downsampling_method: "antialiased"  # one of ["antialiased", "adaptive", "bicubic", "area"]
+  use_extended_features_spatial_regularization: true
+  extended_features_spatial_regularization_sigma_factor: 0.5
+  extended_features_spatial_regularization_loss_type: "l2"
+  lambda_extended_features_spatial_regularization: 0.3
+
 
 hydra:
   output_subdir: null

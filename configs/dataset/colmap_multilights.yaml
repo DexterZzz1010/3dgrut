@@ -1,0 +1,18 @@
+# @package _global_
+
+# COLMAP Multi-Lights Dataset Configuration
+# Inherits from COLMAP dataset and adds multi-lighting capabilities
+
+dataset:
+  type: colmap_multilights
+  calibration_dir: sparse/0
+  downsample_factor: 1.0
+  test_split_interval: 8
+  save_downsampled_images: true
+  downsample_method: lanczos
+  
+  # Multi-lights specific parameters
+  ibl_resolution: [256, 512]  # [height, width] for IBL processing
+  use_original_images: true   # If true, loads original images; if false, loads relit images
+  selected_ibl_names: null    # List of IBL names to use (null = use all available)
+  ibl_format: "latlong"       # Format for IBL processing: "latlong", "cubemap"

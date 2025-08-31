@@ -16,6 +16,7 @@
 from .dataset_nerf import NeRFDataset
 from .dataset_colmap import ColmapDataset
 from .dataset_scannetpp import ScannetppDataset
+from .dataset_colmap_multilights import ColmapMultiLightsDataset
 
 
 def make(name: str, config, ray_jitter):
@@ -50,9 +51,19 @@ def make(name: str, config, ray_jitter):
                 config,
                 split="val"
             )
+        case "colmap_multilights":
+            train_dataset = ColmapMultiLightsDataset(
+                config,
+                split="train",
+                ray_jitter=ray_jitter,
+            )
+            val_dataset = ColmapMultiLightsDataset(
+                config,
+                split="val",
+            )
         case _:
             raise ValueError(
-                f'Unsupported dataset type: {config.dataset.type}. Choose between: ["colmap", "nerf", "scannetpp"].'
+                f'Unsupported dataset type: {config.dataset.type}. Choose between: ["colmap", "nerf", "scannetpp", "colmap_multilights"].'
             )
 
     return train_dataset, val_dataset
@@ -75,8 +86,13 @@ def make_test(name: str, config):
                 config,
                 split="val",
             )
+        case "colmap_multilights":
+            dataset = ColmapMultiLightsDataset(
+                config,
+                split="val",
+            )
         case _:
             raise ValueError(
-                f'Unsupported dataset type: {config.dataset.type}. Choose between: ["colmap", "nerf", "scannetpp"].'
+                f'Unsupported dataset type: {config.dataset.type}. Choose between: ["colmap", "nerf", "scannetpp", "colmap_multilights"].'
             )
     return dataset

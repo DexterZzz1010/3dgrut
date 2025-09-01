@@ -1,0 +1,31 @@
+# Configuration for COLMAP dataset with G-buffer support
+# This dataset loads COLMAP images along with extracted G-buffers as concatenated feature maps
+
+type: colmap_gbuffers
+
+# Basic dataset parameters
+calibration_dir: sparse/0
+downsample_factor: 1
+test_split_interval: 8  # Every 8th frame for testing
+save_downsampled_images: true
+downsample_method: lanczos
+
+# G-buffer specific parameters
+gbuffer_config:
+  # Whether to load G-buffers at all
+  load_gbuffers: true
+  
+  # G-buffer types to load (subset of: basecolor, depth, metallic, normal, roughness)
+  # If null, loads all available types
+  gbuffer_types: null
+  
+  # Whether to normalize G-buffers to [0,1] range
+  gbuffer_normalize: false
+  
+  # How to return G-buffers: "concat" or "separate"
+  # - "concat": Concatenate all G-buffers along channel dimension into single tensor
+  # - "separate": Return each G-buffer type as separate tensor
+  gbuffer_format: "separate"
+
+# Feature loading (can be used alongside G-buffers)
+load_features: false

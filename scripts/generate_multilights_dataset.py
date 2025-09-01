@@ -45,6 +45,22 @@ Usage:
         --output_path /path/to/existing/dataset \
         --num_versions 2 \
         --append
+    
+    # Resume from failed run (reuses existing G-buffers)
+    python generate_multilights_dataset.py \
+        --colmap_path /path/to/colmap/dataset \
+        --ibl_folder /path/to/hdr/files \
+        --output_path /path/to/failed/dataset \
+        --num_versions 3 \
+        --resume
+    
+    # Force individual relighting (if batch processing fails)
+    python generate_multilights_dataset.py \
+        --colmap_path /path/to/colmap/dataset \
+        --ibl_folder /path/to/hdr/files \
+        --output_path /path/to/output/dataset \
+        --num_versions 5 \
+        --force_individual_relighting
 """
 
 import argparse
@@ -218,7 +234,7 @@ def detect_image_resolution(colmap_path, downsample_factor=1.0):
     for ext in ['.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG']:
         image_files.extend(images_dir.glob(f"*{ext}"))
     
-    if not valid_files:
+    if not image_files:
         raise ValueError(f"No image files found in {images_dir}")
     
     # Check first few images to detect resolution
@@ -485,6 +501,38 @@ def get_next_version_index(dataset_info):
     return max_index + 1
 
 
+def check_existing_gbuffers(output_path):
+    """
+    Check for existing G-buffers from a previous failed run.
+    
+    Args:
+        output_path: Output dataset path
+        
+    Returns:
+        Path to G-buffers directory if found, None otherwise
+    """
+    output_path = Path(output_path)
+    
+    # Check for G-buffers in permanent location
+    permanent_gbuffer_dir = output_path / "gbuffers"
+    if permanent_gbuffer_dir.exists():
+        gbuffer_files = list(permanent_gbuffer_dir.glob("*"))
+        if gbuffer_files:
+            print(f"✅ Found existing G-buffers in permanent location: {permanent_gbuffer_dir}")
+            return permanent_gbuffer_dir
+    
+    # Check for G-buffers in temporary location
+    temp_gbuffer_dir = output_path / "temp_processing" / "gbuffer_output" / "gbuffer_frames"
+    if temp_gbuffer_dir.exists():
+        gbuffer_files = list(temp_gbuffer_dir.glob("*"))
+        if gbuffer_files:
+            print(f"✅ Found existing G-buffers in temporary location: {temp_gbuffer_dir}")
+            print(f"💡 These will be preserved to permanent location during processing")
+            return temp_gbuffer_dir
+    
+    return None
+
+
 def preserve_gbuffers(gbuffer_dir, output_path):
     """
     Copy G-buffers to a permanent directory for future reuse.
@@ -545,18 +593,67 @@ def prepare_colmap_images(colmap_path, temp_dir):
 
 
 def find_ibl_files(ibl_folder):
-    """Find all IBL (.hdr/.exr) files in the specified folder."""
+    """Find all valid IBL (.hdr/.exr) files in the specified folder."""
     ibl_folder = Path(ibl_folder)
-    ibl_files = []
+    all_ibl_files = []
     
     for ext in ['.hdr', '.HDR', '.exr', '.EXR']:
-        ibl_files.extend(ibl_folder.glob(f"*{ext}"))
+        all_ibl_files.extend(ibl_folder.glob(f"*{ext}"))
     
-    if not ibl_files:
+    if not all_ibl_files:
         raise ValueError(f"No IBL files found in {ibl_folder}")
     
-    print(f"Found {len(ibl_files)} IBL files: {[f.name for f in ibl_files]}")
-    return sorted(ibl_files)
+    # Validate IBL files and exclude corrupted ones
+    valid_ibl_files = []
+    corrupted_files = []
+    
+    print(f"Validating {len(all_ibl_files)} IBL files...")
+    for ibl_file in all_ibl_files:
+        if validate_hdr_file(ibl_file):
+            valid_ibl_files.append(ibl_file)
+        else:
+            corrupted_files.append(ibl_file)
+    
+    if corrupted_files:
+        print(f"⚠️  Skipping {len(corrupted_files)} corrupted IBL files:")
+        for f in corrupted_files[:5]:  # Show first 5
+            print(f"   ❌ {f.name}")
+        if len(corrupted_files) > 5:
+            print(f"   ... and {len(corrupted_files) - 5} more")
+    
+    if not valid_ibl_files:
+        raise ValueError(f"No valid IBL files found in {ibl_folder}")
+    
+    print(f"✅ Found {len(valid_ibl_files)} valid IBL files: {[f.name for f in valid_ibl_files[:10]]}{'...' if len(valid_ibl_files) > 10 else ''}")
+    return sorted(valid_ibl_files)
+
+
+def validate_hdr_file(hdr_path):
+    """
+    Validate that an HDR/EXR file is readable.
+    
+    Args:
+        hdr_path: Path to HDR/EXR file
+        
+    Returns:
+        bool: True if file is valid and readable
+    """
+    try:
+        # Enable OpenEXR support
+        os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
+        
+        # Try to load the image
+        image = cv2.imread(str(hdr_path), cv2.IMREAD_UNCHANGED)
+        if image is None:
+            return False
+        
+        # Check if image has reasonable dimensions
+        if len(image.shape) < 2 or image.shape[0] < 10 or image.shape[1] < 10:
+            return False
+            
+        return True
+    except Exception:
+        return False
 
 
 def rotate_hdr_image(input_path, output_path, rotation_degrees):
@@ -596,6 +693,10 @@ def rotate_hdr_image(input_path, output_path, rotation_degrees):
     success = cv2.imwrite(str(output_path), image)
     if not success:
         raise ValueError(f"Failed to save rotated HDR/EXR image: {output_path}")
+    
+    # Validate the saved file
+    if not validate_hdr_file(output_path):
+        raise ValueError(f"Saved HDR file failed validation: {output_path}")
     
     print(f"  Rotated HDR by {rotation_degrees:.1f}° -> {output_path.name}")
 
@@ -645,94 +746,6 @@ def generate_random_ibl_versions(ibl_files, num_versions, rotation_range, output
     return versions
 
 
-def check_existing_dataset(output_path):
-    """
-    Check if an existing multi-lights dataset exists and is valid for appending.
-    
-    Args:
-        output_path: Path to the dataset directory
-        
-    Returns:
-        Tuple of (is_valid, dataset_info, gbuffer_dir)
-    """
-    output_path = Path(output_path)
-    
-    # Check if directory exists
-    if not output_path.exists():
-        return False, None, None
-    
-    # Check for dataset_info.json
-    info_file = output_path / "dataset_info.json"
-    if not info_file.exists():
-        return False, None, None
-    
-    try:
-        with open(info_file, 'r') as f:
-            dataset_info = json.load(f)
-    except Exception as e:
-        print(f"Warning: Could not read dataset_info.json: {e}")
-        return False, None, None
-    
-    # Check for G-buffers in temp directory or a permanent location
-    possible_gbuffer_dirs = [
-        output_path / "gbuffers",  # Permanent location
-        output_path / "temp_processing" / "gbuffer_output" / "gbuffer_frames",  # Temp location
-    ]
-    
-    gbuffer_dir = None
-    for dir_path in possible_gbuffer_dirs:
-        if dir_path.exists() and any(dir_path.iterdir()):
-            gbuffer_dir = dir_path
-            break
-    
-    if gbuffer_dir is None:
-        print("Warning: No G-buffers found in existing dataset")
-        return False, dataset_info, None
-    
-    print(f"Found existing dataset with {dataset_info.get('num_versions', 0)} versions")
-    print(f"G-buffers location: {gbuffer_dir}")
-    
-    return True, dataset_info, gbuffer_dir
-
-
-def preserve_gbuffers(temp_gbuffer_dir, output_path):
-    """
-    Copy G-buffers to permanent location for reuse.
-    
-    Args:
-        temp_gbuffer_dir: Temporary G-buffer directory
-        output_path: Output dataset directory
-    """
-    permanent_gbuffer_dir = output_path / "gbuffers"
-    
-    if not permanent_gbuffer_dir.exists():
-        print("Preserving G-buffers for future use...")
-        shutil.copytree(temp_gbuffer_dir, permanent_gbuffer_dir)
-        print(f"G-buffers saved to: {permanent_gbuffer_dir}")
-
-
-def get_next_version_index(dataset_info):
-    """
-    Get the next version index for appending new versions.
-    
-    Args:
-        dataset_info: Existing dataset metadata
-        
-    Returns:
-        Next available version index
-    """
-    if dataset_info is None:
-        return 0
-    
-    existing_versions = dataset_info.get('versions', [])
-    if not existing_versions:
-        return 0
-    
-    # Find highest existing version index
-    max_index = max(v.get('version_index', 0) for v in existing_versions)
-    return max_index + 1
-
-
 def relight_with_custom_ibl(gbuffer_dir, ibl_file, cosmos_path, checkpoint_dir, output_dir, height, width, num_frames, ibl_index):
     """
     Relight G-buffers with a custom IBL file.
@@ -755,9 +768,30 @@ def relight_with_custom_ibl(gbuffer_dir, ibl_file, cosmos_path, checkpoint_dir, 
         raise FileNotFoundError(f"G-buffer directory not found: {gbuffer_path}")
     
     # Check for G-buffer files (should have various passes like basecolor, normal, etc.)
-    gbuffer_files = list(gbuffer_path.glob("*.png")) + list(gbuffer_path.glob("*.jpg")) + list(gbuffer_path.glob("*.jpeg"))
-    if not gbuffer_files:
-        raise FileNotFoundError(f"No G-buffer images found in {gbuffer_path}. Expected PNG/JPG files from inverse renderer.")
+    # Use the same validation logic as batch relighting
+    all_files = list(gbuffer_path.glob("*"))
+    valid_gbuffer_files = []
+    
+    for file in all_files:
+        if file.is_file():
+            file_size = file.stat().st_size
+            if (file.suffix.lower() in ['.png', '.jpg', '.jpeg', '.tiff', '.tif', '.exr'] or 
+                (not file.suffix and file_size > 1000)):
+                valid_gbuffer_files.append(file)
+        elif file.is_dir():
+            # Look inside subdirectories for G-buffer files
+            subfiles = list(file.glob("*"))
+            for subfile in subfiles:
+                if subfile.is_file():
+                    file_size = subfile.stat().st_size
+                    if (subfile.suffix.lower() in ['.png', '.jpg', '.jpeg', '.tiff', '.tif', '.exr'] or 
+                        (not subfile.suffix and file_size > 1000)):
+                        valid_gbuffer_files.append(subfile)
+    
+    if not valid_gbuffer_files:
+        raise FileNotFoundError(f"No valid G-buffer files found in {gbuffer_path}. Expected image files or files without extensions from cosmos1-diffusion-renderer.")
+    
+    print(f"✅ Found {len(valid_gbuffer_files)} valid G-buffer files for individual relighting")
     
     # First, we need to modify the ENV_LIGHT_PATH_LIST in the forward renderer script
     # We'll create a temporary modified version
@@ -804,7 +838,6 @@ def relight_with_custom_ibl(gbuffer_dir, ibl_file, cosmos_path, checkpoint_dir, 
             "--use_custom_envmap", "True",
             "--video_save_folder", str(output_dir),
             "--save_image", "True",
-            "--save_video", "False",  # We want images, not videos
             "--height", str(height),
             "--width", str(width)
         ]
@@ -957,6 +990,7 @@ def relight_with_all_ibls(gbuffer_dir, ibl_versions, cosmos_path, checkpoint_dir
             "--use_custom_envmap", "True",
             "--video_save_folder", str(output_dir),
             "--save_image", "True",
+            "--save_video", "False",  # We want images, not videos
             "--height", str(height),
             "--width", str(width)
         ]
@@ -1110,9 +1144,17 @@ def organize_output_dataset(output_path, colmap_path, ibl_versions, temp_dir, or
             # Find and move relit images for this version
             temp_relit_dir = Path(temp_dir) / "relighting_output"
             if temp_relit_dir.exists():
+                # Look for batch relighting outputs (pattern: *relit_{version_idx:04d}*)
                 for relit_file in temp_relit_dir.glob(f"*relit_{version_idx:04d}*"):
                     if relit_file.suffix.lower() in ['.jpg', '.jpeg', '.png', '.mp4']:
                         shutil.copy2(relit_file, version_dir / relit_file.name)
+                
+                # Look for individual relighting outputs (in version subdirectories)
+                version_temp_dir = temp_relit_dir / f"version_{version_idx:03d}"
+                if version_temp_dir.exists():
+                    for relit_file in version_temp_dir.glob("*"):
+                        if relit_file.suffix.lower() in ['.jpg', '.jpeg', '.png', '.mp4']:
+                            shutil.copy2(relit_file, version_dir / relit_file.name)
             
             version_info.append({
                 "version_index": version_idx,
@@ -1259,6 +1301,16 @@ def parse_arguments():
         action="store_true",
         help="Force use cosmos1-diffusion-renderer's expected resolution (704×1280)"
     )
+    parser.add_argument(
+        "--resume", 
+        action="store_true",
+        help="Resume from existing G-buffers (skip G-buffer extraction if they exist)"
+    )
+    parser.add_argument(
+        "--force_individual_relighting", 
+        action="store_true",
+        help="Force individual relighting instead of batch processing (slower but more reliable)"
+    )
     
     return parser.parse_args()
 
@@ -1375,11 +1427,39 @@ def main():
         else:
             print("=== Starting Multi-Lights Dataset Generation ===")
         
-        # Handle G-buffers: extract new or use existing
+        # Handle G-buffers: extract new, use existing from append, or resume from failed run
         if args.append and existing_gbuffer_dir:
             print("\n1. Using existing G-buffers...")
             gbuffer_dir = existing_gbuffer_dir
             print(f"G-buffers found at: {gbuffer_dir}")
+        elif args.resume or not args.append:
+            # Check for existing G-buffers from previous run
+            existing_gbuffer_dir = check_existing_gbuffers(output_path)
+            
+            if existing_gbuffer_dir and (args.resume or args.append):
+                print("\n1. Using existing G-buffers from previous run...")
+                gbuffer_dir = existing_gbuffer_dir
+                print(f"G-buffers found at: {gbuffer_dir}")
+                
+                # Preserve G-buffers if they're still in temporary location
+                if "temp_processing" in str(gbuffer_dir):
+                    preserve_gbuffers(gbuffer_dir, output_path)
+            else:
+                # Step 1: Prepare COLMAP images
+                print("\n1. Preparing COLMAP images...")
+                images_dir = prepare_colmap_images(colmap_path, temp_dir)
+                
+                # Step 2: Extract G-buffers (only once for all versions)
+                print("\n2. Extracting G-buffers...")
+                gbuffer_output_dir = temp_dir / "gbuffer_output"
+                gbuffer_dir = extract_gbuffers(
+                    images_dir, cosmos_path, args.checkpoint_dir, 
+                    gbuffer_output_dir, height, width, args.num_frames
+                )
+                
+                # Preserve G-buffers for future reuse
+                if not args.append:  # Only preserve for new datasets
+                    preserve_gbuffers(gbuffer_dir, output_path)
         else:
             # Step 1: Prepare COLMAP images
             print("\n1. Preparing COLMAP images...")
@@ -1452,11 +1532,96 @@ def main():
                 'rotation_degrees': rotation_degrees
             })
         
-        # Call the efficient batch relighting function
-        relight_with_all_ibls(
-            gbuffer_dir, ibl_versions_for_batch, cosmos_path, args.checkpoint_dir,
-            relighting_output_dir, height, width, args.num_frames
-        )
+        # Choose relighting strategy
+        if args.force_individual_relighting:
+            print(f"💡 Using individual relighting (as requested with --force_individual_relighting)")
+            # Use individual relighting
+            relighting_output_dir.mkdir(parents=True, exist_ok=True)
+            
+            successful_versions = []
+            failed_versions = []
+            
+            with tqdm(total=len(ibl_versions), desc="💡 Individual relighting", unit="IBL versions") as pbar:
+                for i, (version_idx, rotated_ibl_path, original_ibl_name, rotation_degrees) in enumerate(ibl_versions):
+                    pbar.set_postfix_str(f"v{version_idx:03d}: {original_ibl_name}")
+                    
+                    version_output_dir = relighting_output_dir / f"version_{version_idx:03d}"
+                    version_output_dir.mkdir(exist_ok=True)
+                    
+                    try:
+                        relight_with_custom_ibl(
+                            gbuffer_dir, rotated_ibl_path, cosmos_path, args.checkpoint_dir,
+                            version_output_dir, height, width, args.num_frames, i
+                        )
+                        successful_versions.append((version_idx, original_ibl_name))
+                    except Exception as e:
+                        print(f"\n⚠️  Failed to relight with {original_ibl_name}: {e}")
+                        failed_versions.append((version_idx, original_ibl_name, str(e)))
+                    
+                    pbar.update(1)
+            
+            # Update ibl_versions to only include successful ones
+            ibl_versions = [(v, p, n, r) for v, p, n, r in ibl_versions 
+                           if v in [sv[0] for sv in successful_versions]]
+            
+            print(f"✅ Individual relighting completed for {len(successful_versions)} IBL versions")
+            if failed_versions:
+                print(f"⚠️  {len(failed_versions)} versions failed:")
+                for version_idx, name, error in failed_versions[:3]:
+                    print(f"   ❌ v{version_idx:03d}: {name} - {error}")
+                if len(failed_versions) > 3:
+                    print(f"   ... and {len(failed_versions) - 3} more")
+        else:
+            # Try batch relighting first, fall back to individual if it fails
+            try:
+                print(f"💡 Attempting batch relighting (faster, but may fail with some G-buffer formats)...")
+                relight_with_all_ibls(
+                    gbuffer_dir, ibl_versions_for_batch, cosmos_path, args.checkpoint_dir,
+                    relighting_output_dir, height, width, args.num_frames
+                )
+            except RuntimeError as e:
+                if "Batch relighting failed" in str(e):
+                    print(f"⚠️  Batch relighting failed, falling back to individual relighting...")
+                    print(f"💡 This will be slower but more reliable.")
+                    
+                    # Fall back to individual relighting
+                    relighting_output_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    successful_versions = []
+                    failed_versions = []
+                    
+                    with tqdm(total=len(ibl_versions), desc="💡 Individual relighting", unit="IBL versions") as pbar:
+                        for i, (version_idx, rotated_ibl_path, original_ibl_name, rotation_degrees) in enumerate(ibl_versions):
+                            pbar.set_postfix_str(f"v{version_idx:03d}: {original_ibl_name}")
+                            
+                            version_output_dir = relighting_output_dir / f"version_{version_idx:03d}"
+                            version_output_dir.mkdir(exist_ok=True)
+                            
+                            try:
+                                relight_with_custom_ibl(
+                                    gbuffer_dir, rotated_ibl_path, cosmos_path, args.checkpoint_dir,
+                                    version_output_dir, height, width, args.num_frames, i
+                                )
+                                successful_versions.append((version_idx, original_ibl_name))
+                            except Exception as e:
+                                print(f"\n⚠️  Failed to relight with {original_ibl_name}: {e}")
+                                failed_versions.append((version_idx, original_ibl_name, str(e)))
+                            
+                            pbar.update(1)
+                    
+                    # Update ibl_versions to only include successful ones
+                    ibl_versions = [(v, p, n, r) for v, p, n, r in ibl_versions 
+                                   if v in [sv[0] for sv in successful_versions]]
+                    
+                    print(f"✅ Individual relighting completed for {len(successful_versions)} IBL versions")
+                    if failed_versions:
+                        print(f"⚠️  {len(failed_versions)} versions failed:")
+                        for version_idx, name, error in failed_versions[:3]:
+                            print(f"   ❌ v{version_idx:03d}: {name} - {error}")
+                        if len(failed_versions) > 3:
+                            print(f"   ... and {len(failed_versions) - 3} more")
+                else:
+                    raise
         
         # Final step: Organize dataset
         final_step = step_offset + 4

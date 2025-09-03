@@ -43,6 +43,7 @@ struct RayPayload {
     uint32_t flags;
     uint32_t idx;
     tcnn::vec<FeatDim> features;
+    tcnn::vec3 integratedNormal;  // Accumulated normal
 
 #if GAUSSIAN_ENABLE_HIT_COUNT
     uint32_t hitN;
@@ -89,9 +90,10 @@ __device__ __inline__ RayPayloadT initializeRay(const threedgut::RenderParameter
         return ray;
     }
     ray.idx           = x + params.resolution.x * y;
-    ray.hitT          = 0.0f;
-    ray.transmittance = 1.0f;
-    ray.features      = tcnn::vec<RayPayloadT::FeatDim>::zero();
+    ray.hitT            = 0.0f;
+    ray.transmittance   = 1.0f;
+    ray.features        = tcnn::vec<RayPayloadT::FeatDim>::zero();
+    ray.integratedNormal = tcnn::vec3::zero();  // Initialize normal accumulation
 
     ray.origin    = sensorToWorldTransform * tcnn::vec4(sensorRayOriginPtr[ray.idx], 1.0f);
     ray.direction = tcnn::mat3(sensorToWorldTransform) * sensorRayDirectionPtr[ray.idx];
@@ -118,6 +120,7 @@ __device__ __inline__ void finalizeRay(const TRayPayload& ray,
                                        float* __restrict__ worldHitDistancePtr,
                                        tcnn::vec4* __restrict__ radianceDensityPtr,
                                        float* __restrict__ extendedFeaturesPtr,
+                                       tcnn::vec3* __restrict__ worldNormalPtr,
                                        const tcnn::mat4x3& sensorToWorldTransform) {
     if (!ray.isValid()) {
         return;
@@ -136,6 +139,16 @@ __device__ __inline__ void finalizeRay(const TRayPayload& ray,
 
 
     worldHitDistancePtr[ray.idx] = ray.hitT;
+    
+    // Output integrated normals (normalized)
+    tcnn::vec3 normal = ray.integratedNormal;
+    float norm = length(normal);
+    if (norm > 1e-8f) {
+        normal = normal / norm;
+    } else {
+        normal = tcnn::vec3(0.0f, 0.0f, 1.0f);  // Default normal if no hits
+    }
+    worldNormalPtr[ray.idx] = normal;
 
 #if GAUSSIAN_ENABLE_HIT_COUNT
     worldCountPtr[ray.idx] = (float)ray.hitN;

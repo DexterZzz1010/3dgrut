@@ -33,6 +33,14 @@ class Batch:
     intrinsics: Optional[list] = None
     intrinsics_OpenCVPinholeCameraModelParameters: Optional[dict] = None
     intrinsics_OpenCVFisheyeCameraModelParameters: Optional[dict] = None
+    
+    # G-buffer support
+    gbuffers: Optional[torch.Tensor] = None  # [B, H, W, 9] concatenated G-buffers
+    gbuffer_basecolor: Optional[torch.Tensor] = None  # [B, H, W, 3]
+    gbuffer_depth: Optional[torch.Tensor] = None  # [B, H, W, 1]  
+    gbuffer_normal: Optional[torch.Tensor] = None  # [B, H, W, 3]
+    gbuffer_metallic: Optional[torch.Tensor] = None  # [B, H, W, 1]
+    gbuffer_roughness: Optional[torch.Tensor] = None  # [B, H, W, 1]
 
     def __post_init__(self):
         batch_size = self.T_to_world.shape[0]

@@ -87,6 +87,7 @@ class GUI:
         self.viz_render_subsample = 1
         self.viz_render_train_view = False
         self.viz_render_show_details = False
+        self.viz_normals_camera_space = False  # False = world-space (default), True = camera-space
         self.render_timer = CudaTimer()
         self.render_width = 1920
         self.render_width = 1080
@@ -187,11 +188,20 @@ class GUI:
             self.render_width = window_w
             self.render_height = window_h
 
+        # Optionally transform normals to camera space for visualization
+        if self.viz_normals_camera_space:
+            pred_normals_viz = self._transform_normals_to_camera_space_for_viz(
+                outputs["pred_normals"], inputs.T_to_world
+            )
+        else:
+            # Use world-space normals (default) - shows true 3D surface orientation
+            pred_normals_viz = outputs["pred_normals"]
+        
         return (
             outputs["pred_rgb"],
             outputs["pred_opacity"],
             outputs["pred_dist"],
-            outputs["pred_normals"],
+            pred_normals_viz,
             outputs["hits_count"] / self.conf.writer.max_num_hits,
             outputs["pred_extended_features"],
         )
@@ -319,7 +329,10 @@ class GUI:
                 self.viz_render_scalar_buffer.update_data(to_np(sple_ohit))
 
         elif style == "normals":
-            # scale in rendering space
+            # Display normals: world-space (default) or camera-space (optional via checkbox)
+            # World-space: Shows true 3D surface orientation, colors change as camera moves (good for lighting analysis)
+            # Camera-space: Like normal maps, colors stay consistent as camera moves (good for surface detail inspection)
+            # Scale from [-1,1] to [0,1] for RGB display: Red=X, Green=Y, Blue=Z
             sple_onrm = 0.5 * (sple_onrm + 1)
             # append 1s for alpha
             sple_onrm = torch.cat((sple_onrm, torch.ones_like(sple_onrm[:, :, :, 0:1])), dim=-1)
@@ -385,6 +398,45 @@ class GUI:
 
         logger.info(f"Video saved to {output_video_filename}")
 
+    def _transform_normals_to_camera_space_for_viz(self, pred_normals_world: torch.Tensor, T_to_world: torch.Tensor) -> torch.Tensor:
+        """
+        Transform predicted normals from world space to camera space for GUI visualization.
+        
+        Two visualization modes available:
+        - World-space normals (default): Show true 3D surface orientation, useful for lighting/geometry analysis
+        - Camera-space normals (optional): Consistent view like normal maps, easier for surface detail inspection
+        
+        Args:
+            pred_normals_world: World-space normals [B, H, W, 3]
+            T_to_world: Transformation matrix from ray space to world space [B, 4, 4]
+            
+        Returns:
+            Camera-space normals [B, H, W, 3] or None if input is None
+        """
+        if pred_normals_world is None:
+            return None
+            
+        # Get world-to-camera transformation (inverse of camera-to-world)
+        T_to_camera = torch.linalg.inv(T_to_world)  # [B, 4, 4]
+        
+        # Extract rotation part (top-left 3x3) and transpose for normal transformation
+        R_to_camera = T_to_camera[:, :3, :3].transpose(-2, -1)  # [B, 3, 3]
+        
+        # Reshape normals for batch matrix multiplication
+        B, H, W, _ = pred_normals_world.shape
+        normals_flat = pred_normals_world.view(B, -1, 3)  # [B, H*W, 3]
+        
+        # Transform normals: N_camera = R_to_camera^T @ N_world
+        normals_camera_flat = torch.bmm(normals_flat, R_to_camera)  # [B, H*W, 3]
+        
+        # Reshape back to original dimensions
+        pred_normals_camera = normals_camera_flat.view(B, H, W, 3)
+        
+        # Normalize to unit length
+        pred_normals_camera = torch.nn.functional.normalize(pred_normals_camera, p=2, dim=-1)
+        
+        return pred_normals_camera
+
     def ps_ui_callback(self):
         global trajectory
 
@@ -441,12 +493,21 @@ class GUI:
             if self.viz_render_styles[self.viz_render_style_ind] == "distance":
                 psim.SameLine()
                 _, self.viz_render_style_scale = psim.InputFloat("scale", self.viz_render_style_scale, 0.01)
+            elif self.viz_render_styles[self.viz_render_style_ind] == "normals":
+                _, self.viz_normals_camera_space = psim.Checkbox("Camera Space", self.viz_normals_camera_space)
+                if psim.IsItemHovered():
+                    psim.BeginTooltip()
+                    psim.Text("World Space (default): Colors change with camera movement, good for lighting analysis")
+                    psim.Text("Camera Space: Colors stay consistent like normal maps, good for surface detail")
+                    psim.EndTooltip()
 
             changed, self.viz_render_subsample = psim.InputInt("Subsample Factor", self.viz_render_subsample, 1)
             if changed:
                 self.viz_render_subsample = max(self.viz_render_subsample, 1)
 
             _, self.viz_render_train_view = psim.Checkbox("render w/ train=True", self.viz_render_train_view)
+            
+            psim.TreePop()  # Close the "Render" TreeNode
 
         if self.live_update:
             self.update_render_view_viz()

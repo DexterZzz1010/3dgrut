@@ -48,7 +48,7 @@ public:
 
     ~SplatRaster();
 
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
     trace(uint32_t frameNumber, int numActiveFeatures,
           // Particles
           torch::Tensor particleDensity,
@@ -86,6 +86,8 @@ public:
              torch::Tensor rayRadianceDensityGradient,
              torch::Tensor rayHitDistance,
              torch::Tensor rayHitDistanceGradient,
+             torch::Tensor rayHitNormal,
+             torch::Tensor rayHitNormalGradient,
              torch::Tensor rayExtendedFeatures,
              torch::Tensor rayExtendedFeaturesGradient);
 

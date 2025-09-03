@@ -19,8 +19,8 @@ COLMAP G-Buffer Dataset
 A dataset class that inherits from ColmapDataset and adds support for loading
 G-buffers (basecolor, depth, metallic, normal, roughness) as concatenated feature maps.
 
-This dataset is designed to work with G-buffers extracted using the extract_gbuffers.py
-script, which creates G-buffer files from COLMAP images using cosmos1-diffusion-renderer.
+This dataset is designed to work with G-buffers created using the create_colmap_gbuffers.py
+script, which creates complete COLMAP G-buffer datasets from COLMAP images using cosmos1-diffusion-renderer.
 """
 
 import os
@@ -33,6 +33,7 @@ from typing import Optional, List, Dict, Any, Tuple
 import cv2
 
 from .dataset_colmap import ColmapDataset
+from .protocols import Batch
 
 class ColmapGBufferDataset(ColmapDataset):
     """
@@ -132,10 +133,19 @@ class ColmapGBufferDataset(ColmapDataset):
                            f"(expected 'gbuffers_colmap')")
         
         print(f"✅ Loaded G-buffer dataset metadata:")
-        extraction_info = self.gbuffer_metadata.get('extraction_info', {})
-        print(f"   - Resolution: {extraction_info.get('width', 'Unknown')}×{extraction_info.get('height', 'Unknown')}")
-        print(f"   - G-buffer files: {extraction_info.get('num_gbuffer_files', 'Unknown')}")
-        print(f"   - G-buffer types: {extraction_info.get('gbuffer_types', 'Unknown')}")
+        # Extract resolution from either statistics or gbuffer_info
+        statistics = self.gbuffer_metadata.get('statistics', {})
+        gbuffer_info = self.gbuffer_metadata.get('gbuffer_info', {})
+        image_resolution = statistics.get('image_resolution', gbuffer_info.get('extraction_resolution', {}))
+        
+        width = image_resolution.get('width', 'Unknown')
+        height = image_resolution.get('height', 'Unknown')
+        num_files = statistics.get('num_gbuffer_files', 'Unknown')
+        gbuffer_types = gbuffer_info.get('types', 'Unknown')
+        
+        print(f"   - Resolution: {width}×{height}")
+        print(f"   - G-buffer files: {num_files}")
+        print(f"   - G-buffer types: {gbuffer_types}")
     
     def _validate_gbuffer_structure(self):
         """Validate that the G-buffer directory structure exists."""
@@ -353,21 +363,28 @@ class ColmapGBufferDataset(ColmapDataset):
     
     def get_gpu_batch_with_intrinsics(self, batch):
         """Add the intrinsics to the batch and move data to GPU, including G-buffers."""
-        # Get the base batch from parent
-        sample = super().get_gpu_batch_with_intrinsics(batch)
+        # Get the base batch from parent  
+        base_sample = super().get_gpu_batch_with_intrinsics(batch)
+        
+        # Convert Batch object to dictionary to add G-buffers
+        sample_dict = {}
+        for field in base_sample.__dataclass_fields__:
+            value = getattr(base_sample, field)
+            if value is not None:
+                sample_dict[field] = value
         
         # Add G-buffers to the sample if present
         if "gbuffers" in batch:
             gbuffers = batch["gbuffers"][0].to(self.device, non_blocking=True)
-            sample.update({"gbuffers": gbuffers})
+            sample_dict["gbuffers"] = gbuffers
         
         # Add separate G-buffers if present
         for key in batch.keys():
             if key.startswith("gbuffer_"):
                 gbuffer = batch[key][0].to(self.device, non_blocking=True)
-                sample.update({key: gbuffer})
+                sample_dict[key] = gbuffer
         
-        return sample
+        return Batch(**sample_dict)
     
     def create_dataset_camera_visualization(self):
         """Create a visualization of the dataset cameras with G-buffer preview."""

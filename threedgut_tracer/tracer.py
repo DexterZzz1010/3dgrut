@@ -187,7 +187,7 @@ class Tracer:
                 * sensor_poses.timestamps_us[0]
             )
 
-            ray_radiance_density, ray_hit_distance, ray_extended_features, ray_hit_count, mog_visibility = tracer_wrapper.trace(
+            ray_radiance_density, ray_hit_distance, ray_hit_normal, ray_extended_features, ray_hit_count, mog_visibility = tracer_wrapper.trace(
                 frame_id,
                 n_active_features,
                 particle_density,
@@ -209,6 +209,7 @@ class Tracer:
                 ray_time,
                 ray_radiance_density,
                 ray_hit_distance,
+                ray_hit_normal,
                 ray_extended_features,
                 particle_density,
                 particle_radiance,
@@ -224,6 +225,7 @@ class Tracer:
             return (
                 ray_radiance_density,
                 ray_hit_distance,
+                ray_hit_normal,
                 ray_extended_features,
                 ray_hit_count,
                 mog_visibility,
@@ -234,6 +236,7 @@ class Tracer:
             ctx,
             ray_radiance_density_grd,
             ray_hit_distance_grd,
+            ray_hit_normal_grd,
             ray_extended_features_grd,
             ray_hit_count_grd_UNUSED,
             mog_visibility_grd_UNUSED,
@@ -244,6 +247,7 @@ class Tracer:
                 ray_time,
                 ray_radiance_density,
                 ray_hit_distance,
+                ray_hit_normal,
                 ray_extended_features,
                 particle_density,
                 particle_radiance,
@@ -273,6 +277,8 @@ class Tracer:
                 ray_radiance_density_grd,
                 ray_hit_distance,
                 ray_hit_distance_grd,
+                ray_hit_normal,  # Add missing normal forward value
+                ray_hit_normal_grd,  # Add normal gradient
                 ray_extended_features,
                 ray_extended_features_grd,
             )
@@ -326,6 +332,7 @@ class Tracer:
             (
                 pred_rgba,
                 pred_dist,
+                pred_normals,
                 pred_extended_features,
                 hits_count,
                 mog_visibility,
@@ -349,6 +356,7 @@ class Tracer:
             pred_rgb = pred_rgba[..., :3].unsqueeze(0).contiguous()
             pred_opacity = pred_rgba[..., 3:].unsqueeze(0).contiguous()
             pred_dist = pred_dist.unsqueeze(0).contiguous()
+            pred_normals = pred_normals.unsqueeze(0).contiguous()
             pred_extended_features = pred_extended_features.unsqueeze(0).contiguous()
             hits_count = hits_count.unsqueeze(0).contiguous()
 
@@ -363,7 +371,7 @@ class Tracer:
             "pred_opacity": pred_opacity,
             "pred_dist": pred_dist,
             "pred_extended_features": pred_extended_features,
-            "pred_normals": torch.nn.functional.normalize(torch.ones_like(pred_rgb), dim=3),
+            "pred_normals": pred_normals,
             "hits_count": hits_count,
             "frame_time_ms": timings["forward_render"] if "forward_render" in timings else 0.0,
             "mog_visibility": mog_visibility,

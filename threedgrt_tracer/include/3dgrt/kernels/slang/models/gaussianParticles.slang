@@ -214,13 +214,38 @@ struct Parameters : IDifferentiable {
     float3 scale,
     float3x3 rotationT) {
     
-    // TODO : unify the computation of normals
-    float3 surfelNm = float3(0, 0, 1); // fetchSurfelNm<MOGTRACING_PRIMITIVE_TYPE>(primId % params.gPrimNumTri);
-    // resolve direction ambiguities
-    if (dot(surfelNm, canonicalRayDirection) > 0) {
-        surfelNm *= -1.0f;
+    if (Surfel) {
+        // For surfels, use fixed normal in z-direction
+        float3 surfelNm = float3(0, 0, 1);
+        // resolve direction ambiguities
+        if (dot(surfelNm, canonicalRayDirection) > 0) {
+            surfelNm *= -1.0f;
+        }
+        return normalize(mul(surfelNm * scale, rotationT));
+    } else {
+        // For volumetric Gaussians, compute normal as gradient of density field
+        // Find the point on the ray closest to the Gaussian center (origin in canonical space)
+        const float t = -dot(canonicalRayOrigin, canonicalRayDirection);
+        const float3 closestPoint = canonicalRayOrigin + t * canonicalRayDirection;
+        
+        // The gradient of a 3D Gaussian exp(-0.5 * |p|²) at point p is proportional to -p
+        // In canonical space, the normal direction is the negative of the position vector
+        float3 canonicalNormal = -closestPoint;
+        
+        // Transform the normal back to world space
+        // Since we're transforming a direction (not a point), we use the rotation matrix directly
+        // and account for non-uniform scaling by dividing by scale²
+        const float3 scaledNormal = canonicalNormal / (scale * scale);
+        const float3 worldNormal = mul(scaledNormal, rotationT);
+        
+        // Ensure normal faces towards the ray origin (for proper shading)
+        float3 finalNormal = normalize(worldNormal);
+        if (dot(finalNormal, canonicalRayDirection) > 0) {
+            finalNormal *= -1.0f;
+        }
+        
+        return finalNormal;
     }
-    return normalize(mul(surfelNm * scale, rotationT));
 }
 
 [BackwardDifferentiable][ForceInline]

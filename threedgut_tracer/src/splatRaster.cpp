@@ -170,7 +170,7 @@ SplatRaster::SplatRaster(const nlohmann::json& config)
 SplatRaster::~SplatRaster(void) {
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 SplatRaster::trace(uint32_t frameNumber, int numActiveFeatures,
                    torch::Tensor particleDensity,
                    torch::Tensor particleRadiance,
@@ -196,6 +196,7 @@ SplatRaster::trace(uint32_t frameNumber, int numActiveFeatures,
 
     torch::Tensor rayRadianceDensity = torch::zeros({height, width, 4}, opts);
     torch::Tensor rayHitDistance     = torch::ones({height, width, 1}, opts).multiply(1e06f);
+    torch::Tensor rayHitNormal       = torch::zeros({height, width, 3}, opts);
     torch::Tensor rayExtendedFeatures = torch::zeros({height, width, particleExtendedFeatures.size(1)}, opts);
     torch::Tensor rayHitCount        = torch::zeros({height, width, 1}, opts);
     torch::Tensor particleVisibility = torch::zeros({numParticles, 1}, opts);
@@ -232,6 +233,7 @@ SplatRaster::trace(uint32_t frameNumber, int numActiveFeatures,
         reinterpret_cast<float*>(voidDataPtr(rayHitDistance)),
         reinterpret_cast<tcnn::vec4*>(voidDataPtr(rayRadianceDensity)),
         reinterpret_cast<float*>(voidDataPtr(rayExtendedFeatures)),
+        reinterpret_cast<tcnn::vec3*>(voidDataPtr(rayHitNormal)),
         reinterpret_cast<int*>(voidDataPtr(particleVisibility)),
         m_parameters,
         cudaDeviceIndex,
@@ -243,7 +245,7 @@ SplatRaster::trace(uint32_t frameNumber, int numActiveFeatures,
         timer->stop();
     }
 
-    return std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>(rayRadianceDensity, rayHitDistance, rayExtendedFeatures, rayHitCount, particleVisibility);
+    return std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>(rayRadianceDensity, rayHitDistance, rayHitNormal, rayExtendedFeatures, rayHitCount, particleVisibility);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
@@ -264,6 +266,8 @@ SplatRaster::traceBwd(uint32_t frameNumber, int numActiveFeatures,
                       torch::Tensor rayRadianceDensityGradient,
                       torch::Tensor rayHitDistance,
                       torch::Tensor rayHitDistanceGradient,
+                      torch::Tensor rayHitNormal,
+                      torch::Tensor rayHitNormalGradient,
                       torch::Tensor rayExtendedFeatures,
                       torch::Tensor rayExtendedFeaturesGradient) {
 
@@ -323,12 +327,14 @@ SplatRaster::traceBwd(uint32_t frameNumber, int numActiveFeatures,
         renderParameters,
         reinterpret_cast<const tcnn::vec3*>(voidDataPtr(rayOrigin)),
         reinterpret_cast<const tcnn::vec3*>(voidDataPtr(rayDirection)),
-        reinterpret_cast<float*>(voidDataPtr(rayHitDistance)),
-        reinterpret_cast<float*>(voidDataPtr(rayHitDistanceGradient)),
-        reinterpret_cast<tcnn::vec4*>(voidDataPtr(rayRadianceDensity)),
-        reinterpret_cast<tcnn::vec4*>(voidDataPtr(rayRadianceDensityGradient)),
-        reinterpret_cast<float*>(voidDataPtr(rayExtendedFeatures)),
-        reinterpret_cast<float*>(voidDataPtr(rayExtendedFeaturesGradient)),
+        reinterpret_cast<const float*>(voidDataPtr(rayHitDistance)),
+        reinterpret_cast<const float*>(voidDataPtr(rayHitDistanceGradient)),
+        reinterpret_cast<const tcnn::vec4*>(voidDataPtr(rayRadianceDensity)),
+        reinterpret_cast<const tcnn::vec4*>(voidDataPtr(rayRadianceDensityGradient)),
+        reinterpret_cast<const float*>(voidDataPtr(rayExtendedFeatures)),
+        reinterpret_cast<const float*>(voidDataPtr(rayExtendedFeaturesGradient)),
+        reinterpret_cast<const tcnn::vec3*>(voidDataPtr(rayHitNormal)),
+        reinterpret_cast<const tcnn::vec3*>(voidDataPtr(rayHitNormalGradient)),
         rayBackpropagation ? reinterpret_cast<tcnn::vec3*>(voidDataPtr(rayOriginGradient)) : nullptr,
         rayBackpropagation ? reinterpret_cast<tcnn::vec3*>(voidDataPtr(rayDirectionGradient)) : nullptr,
         m_parameters, cudaDeviceIndex, cudaStream);

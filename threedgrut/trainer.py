@@ -37,6 +37,7 @@ from threedgrut.export.ingp_exporter import INGPExporter
 from threedgrut.export.ply_exporter import PLYExporter
 from threedgrut.export.usdz_exporter import USDZExporter
 from threedgrut.model.losses import ssim
+from threedgrut.model.gbuffer_supervision import compute_gbuffer_supervision_losses
 from threedgrut.model.model import MixtureOfGaussians
 from threedgrut.render import Renderer
 from threedgrut.strategy.base import BaseStrategy
@@ -506,9 +507,56 @@ class Trainer3DGRUT:
                 loss_scale = torch.abs(self.model.get_scale()).mean()
                 lambda_scale = self.conf.loss.lambda_scale
 
+        # G-buffer supervision
+        gbuffer_supervision_losses = {}
+        lambda_gbuffer_supervision = 0.0
+        if hasattr(self.conf.loss, 'use_gbuffer_supervision') and self.conf.loss.use_gbuffer_supervision:
+            with torch.cuda.nvtx.range(f"loss-gbuffer-supervision"):
+                # Extract G-buffer data if available
+                gt_gbuffers = self._extract_gbuffer_data(gpu_batch)
+                
+                if gt_gbuffers:
+                    # Get G-buffer supervision configuration
+                    gbuffer_config = getattr(self.conf.loss, 'gbuffer_supervision', {})
+                    
+                    # Transform predicted normals from world space to camera space
+                    pred_normals_camera = self._transform_normals_to_camera_space(
+                        outputs.get("pred_normals"), gpu_batch.T_to_world
+                    )
+                    
+                    # Compute G-buffer supervision losses
+                    gbuffer_supervision_losses = compute_gbuffer_supervision_losses(
+                        # Predictions
+                        pred_rgb=outputs.get("pred_rgb"),
+                        pred_dist=outputs.get("pred_dist"),
+                        pred_normals=pred_normals_camera,
+                        
+                        # Ground truth G-buffers
+                        gt_albedo=gt_gbuffers.get("basecolor"),
+                        gt_depth=gt_gbuffers.get("depth"),
+                        gt_normals=gt_gbuffers.get("normal"),
+                        
+                        # Mask
+                        valid_mask=mask,
+                        
+                        # Configuration
+                        **gbuffer_config
+                    )
+                    
+                    lambda_gbuffer_supervision = getattr(self.conf.loss, 'lambda_gbuffer_supervision', 0.5)
+
+        # Calculate total G-buffer supervision loss
+        total_gbuffer_supervision_loss = sum(gbuffer_supervision_losses.values()) if gbuffer_supervision_losses else torch.zeros(1, device=self.device)
+
         # Total loss
-        loss = lambda_l1 * loss_l1 + lambda_l2 * loss_l2 + lambda_ssim * loss_ssim + lambda_opacity * loss_opacity + lambda_scale * loss_scale + lambda_extended_features * loss_extended_features + lambda_extended_features_spatial_regularization * loss_extended_features_spatial_regularization
-        return dict(
+        loss = (lambda_l1 * loss_l1 + lambda_l2 * loss_l2 + lambda_ssim * loss_ssim + 
+                lambda_opacity * loss_opacity + lambda_scale * loss_scale + 
+                lambda_extended_features * loss_extended_features + 
+                lambda_extended_features_spatial_regularization * loss_extended_features_spatial_regularization +
+                lambda_gbuffer_supervision * total_gbuffer_supervision_loss)
+        
+        # Prepare return dictionary
+        loss_dict = dict(
             total_loss=loss, 
             extended_features_loss=lambda_extended_features * loss_extended_features, 
             extended_features_spatial_regularization_loss=lambda_extended_features_spatial_regularization * loss_extended_features_spatial_regularization,
@@ -516,8 +564,90 @@ class Trainer3DGRUT:
             l2_loss=lambda_l2 * loss_l2, 
             ssim_loss=lambda_ssim * loss_ssim, 
             opacity_loss=lambda_opacity * loss_opacity, 
-            scale_loss=lambda_scale * loss_scale
+            scale_loss=lambda_scale * loss_scale,
+            gbuffer_supervision_total_loss=lambda_gbuffer_supervision * total_gbuffer_supervision_loss,
         )
+        
+        # Add individual G-buffer supervision loss components
+        for loss_name, loss_value in gbuffer_supervision_losses.items():
+            loss_dict[f"gbuffer_{loss_name}"] = lambda_gbuffer_supervision * loss_value
+        
+        return loss_dict
+
+    def _extract_gbuffer_data(self, gpu_batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        Extract G-buffer data from the batch.
+        
+        Handles both concatenated G-buffers (from ColmapGBufferDataset) and separate G-buffers.
+        
+        Args:
+            gpu_batch: Batch data from dataloader
+            
+        Returns:
+            Dictionary of G-buffer tensors, or empty dict if no G-buffers available
+        """
+        gt_gbuffers = {}
+        
+        # Check for concatenated G-buffers (from ColmapGBufferDataset)
+        if hasattr(gpu_batch, 'gbuffers') and gpu_batch.gbuffers is not None:
+            # Split concatenated G-buffers
+            gbuffers_concat = gpu_batch.gbuffers  # [B, H, W, 9]
+            
+            # Channel order: [R, G, B, depth, metallic, Nx, Ny, Nz, roughness]
+            if gbuffers_concat.shape[-1] >= 9:
+                gt_gbuffers['basecolor'] = gbuffers_concat[..., 0:3]     # RGB
+                gt_gbuffers['depth'] = gbuffers_concat[..., 3:4]         # Depth
+                gt_gbuffers['metallic'] = gbuffers_concat[..., 4:5]      # Metallic
+                gt_gbuffers['normal'] = gbuffers_concat[..., 5:8]        # Normal XYZ
+                gt_gbuffers['roughness'] = gbuffers_concat[..., 8:9]     # Roughness
+            else:
+                print(f"⚠️  G-buffer concatenated tensor has unexpected shape: {gbuffers_concat.shape}")
+        
+        # Check for separate G-buffer tensors
+        else:
+            for gbuffer_type in ['basecolor', 'depth', 'normal', 'metallic', 'roughness']:
+                gbuffer_key = f'gbuffer_{gbuffer_type}'
+                if hasattr(gpu_batch, gbuffer_key):
+                    gt_gbuffers[gbuffer_type] = getattr(gpu_batch, gbuffer_key)
+                elif gbuffer_key in gpu_batch:
+                    gt_gbuffers[gbuffer_type] = gpu_batch[gbuffer_key]
+        
+        return gt_gbuffers
+
+    def _transform_normals_to_camera_space(self, pred_normals_world: torch.Tensor, T_to_world: torch.Tensor) -> torch.Tensor:
+        """
+        Transform predicted normals from world space to camera space for G-buffer comparison.
+        
+        Args:
+            pred_normals_world: World-space normals [B, H, W, 3]
+            T_to_world: Transformation matrix from ray space to world space [B, 4, 4]
+            
+        Returns:
+            Camera-space normals [B, H, W, 3]
+        """
+        if pred_normals_world is None:
+            return None
+            
+        # Get world-to-camera transformation (inverse of camera-to-world)
+        T_to_camera = torch.linalg.inv(T_to_world)  # [B, 4, 4]
+        
+        # Extract rotation part (top-left 3x3) and transpose for normal transformation
+        R_to_camera = T_to_camera[:, :3, :3].transpose(-2, -1)  # [B, 3, 3]
+        
+        # Reshape normals for batch matrix multiplication
+        B, H, W, _ = pred_normals_world.shape
+        normals_flat = pred_normals_world.view(B, -1, 3)  # [B, H*W, 3]
+        
+        # Transform normals: N_camera = R_to_camera^T @ N_world
+        normals_camera_flat = torch.bmm(normals_flat, R_to_camera)  # [B, H*W, 3]
+        
+        # Reshape back to original dimensions
+        pred_normals_camera = normals_camera_flat.view(B, H, W, 3)
+        
+        # Normalize to unit length
+        pred_normals_camera = torch.nn.functional.normalize(pred_normals_camera, p=2, dim=-1)
+        
+        return pred_normals_camera
 
     @torch.cuda.nvtx.range("log_validation_iter")
     def log_validation_iter(

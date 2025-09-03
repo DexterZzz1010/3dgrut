@@ -146,6 +146,8 @@ struct GUTKBufferRenderer : Params {
                                                                       threedgut::sliceVec<TRayPayload::BaseFeatDim, TRayPayload::ExtFeatDim>(ray.featuresGradient));
             }
 
+            // Include normal gradients in backward pass
+            tcnn::vec3 normal, normalGrad;
             particles.densityProcessHitBwdToBuffer<false>(ray.origin,
                                                           ray.direction,
                                                           hitParticle.idx,
@@ -155,16 +157,23 @@ struct GUTKBufferRenderer : Params {
                                                           ray.transmittanceGradient,
                                                           hitParticle.hitT,
                                                           ray.hitTBackward,
-                                                          ray.hitTGradient);
+                                                          ray.hitTGradient,
+                                                          &normal,
+                                                          &ray.integratedNormal,
+                                                          &normalGrad);
 
             ray.transmittance *= (1.0 - hitParticle.alpha);
 
         } else {
+            // Enable normal computation by passing normal pointer
+            tcnn::vec3 normal;
             const float hitWeight =
                 particles.densityIntegrateHit(hitParticle.alpha,
                                               ray.transmittance,
                                               hitParticle.hitT,
-                                              ray.hitT);
+                                              ray.hitT,
+                                              &normal,
+                                              &ray.integratedNormal);
 
             if constexpr (Particles::HasExtendedFeatures) {
                 particles.extendedFeaturesIntegrateFwdFromBuffer(hitWeight,

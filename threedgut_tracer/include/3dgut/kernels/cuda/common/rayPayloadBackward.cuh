@@ -23,6 +23,8 @@ struct RayPayloadBackward : public RayPayload<BaseFeatN, ExtFeatN> {
     float transmittanceGradient;
     float hitTBackward;
     float hitTGradient;
+    tcnn::vec3 integratedNormalBackward;  // Forward normal values
+    tcnn::vec3 integratedNormalGradient;  // Normal gradients
     tcnn::vec<BaseFeatN + ExtFeatN> featuresGradient;
     tcnn::vec<BaseFeatN + ExtFeatN> featuresBackward;
 };
@@ -37,6 +39,8 @@ __device__ __inline__ RayPayloadT initializeBackwardRay(const threedgut::RenderP
                                                         const tcnn::vec<RayPayloadT::BaseFeatDim + 1>* __restrict__ featuresDensityGradientPtr,
                                                         const float* __restrict__ extendedFeaturesPtr,
                                                         const float* __restrict__ extendedFeaturesGradientPtr,
+                                                        const tcnn::vec3* __restrict__ worldNormalPtr,
+                                                        const tcnn::vec3* __restrict__ worldNormalGradientPtr,
                                                         const tcnn::mat4x3& sensorToWorldTransform) {
 
     // NB : no backpropagation through the forward ray initialization / finalization
@@ -52,6 +56,8 @@ __device__ __inline__ RayPayloadT initializeBackwardRay(const threedgut::RenderP
         ray.transmittanceGradient                                              = -1.f * featuresDensityGradient[RayPayloadT::FeatDim];
         ray.hitTBackward                                                       = worldHitDistancePtr[ray.idx];
         ray.hitTGradient                                                       = worldHitDistanceGradientPtr[ray.idx];
+        ray.integratedNormalBackward                                           = worldNormalPtr[ray.idx];
+        ray.integratedNormalGradient                                           = worldNormalGradientPtr[ray.idx];
         threedgut::sliceVec<0, RayPayloadT::BaseFeatDim>(ray.featuresBackward) = threedgut::sliceVec<0, RayPayloadT::BaseFeatDim>(featuresDensity);
         threedgut::sliceVec<0, RayPayloadT::BaseFeatDim>(ray.featuresGradient) = threedgut::sliceVec<0, RayPayloadT::BaseFeatDim>(featuresDensityGradient);
         if constexpr (RayPayloadT::ExtFeatDim > 0) {

@@ -245,6 +245,7 @@ threedgut::Status threedgut::GUTRenderer::renderForward(const RenderParameters& 
                                                         float* worldHitDistanceCudaPtr,
                                                         vec4* radianceDensityCudaPtr,
                                                         float* extendedFeaturesCudaPtr,
+                                                        vec3* worldNormalCudaPtr,
                                                         int* particlesVisibilityCudaPtr,
                                                         Parameters& parameters,
                                                         int cudaDeviceIndex,
@@ -388,6 +389,7 @@ threedgut::Status threedgut::GUTRenderer::renderForward(const RenderParameters& 
             worldHitDistanceCudaPtr,
             radianceDensityCudaPtr,
             extendedFeaturesCudaPtr,
+            (tcnn::vec3*)worldNormalCudaPtr,
             (const tcnn::vec2*)m_forwardContext->particlesProjectedPosition.data(),
             (const tcnn::vec4*)m_forwardContext->particlesProjectedConicOpacity.data(),
             (const float*)m_forwardContext->particlesGlobalDepth.data(),
@@ -408,6 +410,8 @@ threedgut::Status threedgut::GUTRenderer::renderBackward(const RenderParameters&
                                                          const vec4* radianceDensityGradientCudaPtr,   //
                                                          const float* extendedFeaturesCudaPtr,         //  
                                                          const float* extendedFeaturesGradientCudaPtr, // TODO: not implemented yet
+                                                         const vec3* worldNormalCudaPtr,               //
+                                                         const vec3* worldNormalGradientCudaPtr,       // TODO: not implemented yet
                                                          vec3* worldRayOriginGradientCudaPtr,          // TODO: not implemented yet
                                                          vec3* worldRayDirectionGradientCudaPtr,       // TODO: not implemented yet
                                                          Parameters& parameters,
@@ -462,6 +466,8 @@ threedgut::Status threedgut::GUTRenderer::renderBackward(const RenderParameters&
             (const tcnn::vec4*)radianceDensityGradientCudaPtr, //
             (const float*)extendedFeaturesCudaPtr,             //
             (const float*)extendedFeaturesGradientCudaPtr,     // TODO: not implemented yet
+            (const tcnn::vec3*)worldNormalCudaPtr,             //
+            (const tcnn::vec3*)worldNormalGradientCudaPtr,     // TODO: not implemented yet
             (tcnn::vec3*)worldRayOriginGradientCudaPtr,        // TODO: not implemented yet
             (tcnn::vec3*)worldRayDirectionGradientCudaPtr,     // TODO: not implemented yet
             (const tcnn::vec2*)m_forwardContext->particlesProjectedPosition.data(),

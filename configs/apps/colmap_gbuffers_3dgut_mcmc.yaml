@@ -1,0 +1,121 @@
+# @package _global_
+
+# Configuration for COLMAP G-buffer dataset with 3DGUT rendering and MCMC strategy
+# Uses G-buffer supervision ONLY (no RGB supervision)
+
+# order in which configs override each other (/* - denotes a relative search path)
+defaults:
+  - /base_mcmc
+  - /dataset: colmap_gbuffers
+  - /initialization: colmap
+  - /render: 3dgut
+  - _self_
+
+# Experiment settings
+experiment_name: "colmap_gbuffers_3dgut_mcmc"
+
+# Training settings
+n_iterations: 30000
+val_frequency: 1000
+
+# Loss configuration - G-buffer supervision ONLY
+loss:
+  # ❌ DISABLE all RGB supervision
+  use_l1: false
+  use_l2: false  
+  use_ssim: false
+  lambda_l1: 0.0
+  lambda_l2: 0.0
+  lambda_ssim: 0.0
+  
+  # ❌ DISABLE extended features (focus on G-buffers only)
+  use_extended_features: false
+  lambda_extended_features: 0.0
+  
+  # ⚙️ Keep MCMC regularization losses (from base_mcmc)
+  use_opacity: true
+  lambda_opacity: 0.01
+  use_scale: true
+  lambda_scale: 0.01
+  
+  # ✅ ENABLE G-buffer supervision (main supervision signal)
+  use_gbuffer_supervision: true
+  lambda_gbuffer_supervision: 1.0  # Higher weight since it's the only supervision
+  
+  gbuffer_supervision:
+    # 🎨 Albedo supervision (pred_rgb vs gt_basecolor)
+    use_albedo_supervision: true
+    albedo_l1: true
+    albedo_l2: false
+    albedo_ssim: true
+    lambda_albedo_l1: 1.0
+    lambda_albedo_l2: 0.0
+    lambda_albedo_ssim: 0.2  # Higher SSIM weight for structural similarity
+    
+    # 📏 Depth supervision (pred_dist vs gt_depth) - scale-invariant
+    use_depth_supervision: true
+    depth_loss_type: "si_log"  # Scale-invariant log loss
+    lambda_depth: 1.0
+    use_depth_gradient: true   # Scale-invariant gradient loss
+    lambda_depth_gradient: 0.2  # Higher gradient weight for spatial structure
+    
+    # 🧭 Normal supervision (pred_normals vs gt_normals)
+    use_normal_supervision: true
+    normal_l1: true
+    normal_l2: false
+    normal_cosine: true
+    lambda_normal_l1: 1.0
+    lambda_normal_l2: 0.0
+    lambda_normal_cosine: 0.5  # Cosine loss for angle consistency
+
+# Dataset overrides (make sure G-buffers are loaded)
+dataset:
+  gbuffer_config:
+    load_gbuffers: true
+    gbuffer_types: ["basecolor", "depth", "normal", "metallic", "roughness"]
+    gbuffer_normalize: false
+    gbuffer_format: "concat"  # Concatenated format [B,H,W,9]
+
+# Initialization settings
+initialization:
+  use_observation_points: false  # Standard for COLMAP
+
+# Model overrides for 3DGUT+MCMC (from base configs)
+model:
+  default_density: 0.5
+  default_scale_factor: 0.1
+
+# 3DGUT-specific rendering settings (inherited from render/3dgut)
+# - Uncertainty tracking (UT) enabled
+# - Particle kernel rendering
+# - Unsorted splatting (k_buffer_size: 0)
+
+# MCMC strategy settings (inherited from base_mcmc -> strategy/mcmc)
+# - MCMC-based densification and pruning
+# - Stochastic optimization
+
+# Usage:
+# 1. Update dataset path in your specific run:
+#    python train.py --config-name colmap_gbuffers_3dgut_mcmc dataset.path=/path/to/your/colmap/gbuffers/dataset
+#
+# 2. Or create a specific dataset config and override:
+#    python train.py --config-name colmap_gbuffers_3dgut_mcmc dataset=your_specific_dataset
+#
+# Expected dataset structure:
+# /path/to/dataset/
+# ├── images/              # COLMAP images
+# ├── sparse/             # COLMAP reconstruction
+# ├── gbuffers/           # G-buffer files
+# │   ├── image1/
+# │   │   ├── 0000.0000.basecolor.jpg
+# │   │   ├── 0000.0000.depth.jpg
+# │   │   ├── 0000.0000.normal.jpg
+# │   │   ├── 0000.0000.metallic.jpg
+# │   │   └── 0000.0000.roughness.jpg
+# │   └── ...
+# └── dataset_info.json   # G-buffer metadata
+#
+# Required model outputs for G-buffer supervision:
+# - pred_rgb: [B, H, W, 3] - for albedo supervision
+# - pred_dist: [B, H, W, 1] - for depth supervision  
+# - pred_normals: [B, H, W, 3] - for normal supervision

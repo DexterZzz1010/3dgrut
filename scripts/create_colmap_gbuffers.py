@@ -13,11 +13,13 @@ The output dataset is completely independent from the original COLMAP dataset.
 
 Features:
 - Creates standalone COLMAP G-buffer dataset
-- Auto-detects image resolution from COLMAP dataset
+- Auto-detects image resolution and paths from COLMAP calibration data (paths relative to images/ directory)
+- Supports both binary (.bin) and text (.txt) COLMAP formats with automatic camera parameter scaling
 - Supports downsampling for faster processing
 - Compatible with cosmos1-diffusion-renderer checkpoints
 - Copies COLMAP sparse reconstruction data
 - Resizes images to match G-buffer extraction resolution
+- Configurable calibration directory (default: sparse/0)
 
 Usage:
     # Basic usage
@@ -40,11 +42,17 @@ Usage:
         --height 704 \
         --width 1280
 
+    # Use custom calibration directory
+    python create_colmap_gbuffers.py \
+        --input_colmap_path /path/to/original/colmap/dataset \
+        --output_path /path/to/new/colmap_gbuffer/dataset \
+        --calibration_dir sparse/1
+
 Output Structure:
     /output/path/
     ├── images/              # Resized images (matching G-buffer resolution)
-    ├── sparse/             # COLMAP reconstruction (copied from original)
-    │   └── 0/
+    ├── sparse/             # COLMAP reconstruction (copied from original, configurable with --calibration_dir)
+    │   └── 0/              # Default calibration directory (sparse/0)
     │       ├── cameras.bin
     │       ├── images.bin
     │       └── points3D.bin
@@ -194,6 +202,151 @@ def write_images_binary(images, path_to_model_file):
                 fid.write(struct.pack("<ddq", xy[0], xy[1], point3D_id))
 
 
+def read_cameras_text(path_to_model_file):
+    """Read cameras from COLMAP cameras.txt file."""
+    cameras = {}
+    try:
+        with open(path_to_model_file, "r") as fid:
+            for line in fid:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        camera_id = int(parts[0])
+                        model_name = parts[1]
+                        width = int(parts[2])
+                        height = int(parts[3])
+                        
+                        # Map model name to model ID
+                        model_name_to_id = {
+                            "SIMPLE_PINHOLE": 0,
+                            "PINHOLE": 1,
+                            "SIMPLE_RADIAL": 2,
+                            "RADIAL": 3,
+                            "OPENCV": 4,
+                            "OPENCV_FISHEYE": 5,
+                            "FULL_OPENCV": 6,
+                            "FOV": 7,
+                            "SIMPLE_RADIAL_FISHEYE": 8,
+                            "RADIAL_FISHEYE": 9,
+                            "THIN_PRISM_FISHEYE": 10,
+                        }
+                        model_id = model_name_to_id.get(model_name, 1)  # Default to PINHOLE
+                        
+                        params = tuple(float(p) for p in parts[4:])
+                        cameras[camera_id] = Camera(
+                            id=camera_id, model=model_id, width=width, height=height, params=params
+                        )
+        print(f"📷 Read {len(cameras)} cameras from text file")
+        return cameras
+    except Exception as e:
+        print(f"❌ Error reading cameras.txt: {e}")
+        raise
+
+
+def write_cameras_text(cameras, path_to_model_file):
+    """Write cameras to COLMAP cameras.txt file."""
+    model_id_to_name = {
+        0: "SIMPLE_PINHOLE",
+        1: "PINHOLE", 
+        2: "SIMPLE_RADIAL",
+        3: "RADIAL",
+        4: "OPENCV",
+        5: "OPENCV_FISHEYE",
+        6: "FULL_OPENCV",
+        7: "FOV",
+        8: "SIMPLE_RADIAL_FISHEYE",
+        9: "RADIAL_FISHEYE",
+        10: "THIN_PRISM_FISHEYE",
+    }
+    
+    with open(path_to_model_file, "w") as fid:
+        fid.write("# Camera list with one line of data per camera:\n")
+        fid.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
+        fid.write("# Number of cameras: {}\n".format(len(cameras)))
+        for camera in cameras.values():
+            model_name = model_id_to_name.get(camera.model, "PINHOLE")
+            params_str = " ".join([str(p) for p in camera.params])
+            fid.write(f"{camera.id} {model_name} {camera.width} {camera.height} {params_str}\n")
+
+
+def read_images_text(path_to_model_file):
+    """Read images from COLMAP images.txt file."""
+    images = {}
+    try:
+        with open(path_to_model_file, "r") as fid:
+            lines = fid.readlines()
+            i = 0
+            while i < len(lines):
+                line = lines[i].strip()
+                if line and not line.startswith("#"):
+                    parts = line.split()
+                    if len(parts) >= 10:
+                        image_id = int(parts[0])
+                        qvec = np.array([float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])])
+                        tvec = np.array([float(parts[5]), float(parts[6]), float(parts[7])])
+                        camera_id = int(parts[8])
+                        image_name = parts[9]
+                        
+                        # Read 2D points from next line
+                        xys = []
+                        point3D_ids = []
+                        if i + 1 < len(lines):
+                            points_line = lines[i + 1].strip()
+                            if points_line and not points_line.startswith("#"):
+                                points_parts = points_line.split()
+                                # Points are in format: x1 y1 point3D_id1 x2 y2 point3D_id2 ...
+                                for j in range(0, len(points_parts), 3):
+                                    if j + 2 < len(points_parts):
+                                        x = float(points_parts[j])
+                                        y = float(points_parts[j + 1])
+                                        point3D_id = int(points_parts[j + 2])
+                                        xys.append([x, y])
+                                        point3D_ids.append(point3D_id)
+                        
+                        xys = np.array(xys) if xys else np.empty((0, 2))
+                        point3D_ids = np.array(point3D_ids) if point3D_ids else np.empty(0, dtype=int)
+                        
+                        images[image_id] = ColmapImage(
+                            id=image_id, qvec=qvec, tvec=tvec, camera_id=camera_id, 
+                            name=image_name, xys=xys, point3D_ids=point3D_ids
+                        )
+                        i += 2  # Skip the next line (2D points data)
+                    else:
+                        i += 1
+                else:
+                    i += 1
+        
+        print(f"📷 Read {len(images)} images from text file")
+        return images
+    except Exception as e:
+        print(f"❌ Error reading images.txt: {e}")
+        raise
+
+
+def write_images_text(images, path_to_model_file):
+    """Write images to COLMAP images.txt file."""
+    with open(path_to_model_file, "w") as fid:
+        fid.write("# Image list with two lines of data per image:\n")
+        fid.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
+        fid.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
+        fid.write("# Number of images: {}, mean observations per image: {}\n".format(
+            len(images), 
+            np.mean([len(img.point3D_ids) for img in images.values()]) if images else 0
+        ))
+        
+        for image in images.values():
+            # Write image metadata line
+            fid.write(f"{image.id} {image.qvec[0]} {image.qvec[1]} {image.qvec[2]} {image.qvec[3]} "
+                     f"{image.tvec[0]} {image.tvec[1]} {image.tvec[2]} {image.camera_id} {image.name}\n")
+            
+            # Write 2D points line
+            points_str = ""
+            for xy, point3D_id in zip(image.xys, image.point3D_ids):
+                points_str += f"{xy[0]} {xy[1]} {point3D_id} "
+            fid.write(points_str.strip() + "\n")
+
+
 def scale_colmap_cameras(cameras, original_width, original_height, target_width, target_height):
     """Scale camera intrinsic parameters for new image resolution with crop adjustment."""
     scaled_cameras = {}
@@ -322,9 +475,133 @@ def filter_colmap_data_by_images(cameras, images, selected_image_names):
     return filtered_cameras, filtered_images
 
 
+class ColmapImageReader:
+    """Utility class to read image information from COLMAP calibration data."""
+    
+    def __init__(self, colmap_path, calibration_dir):
+        self.colmap_path = Path(colmap_path)
+        self.calib_dir = self.colmap_path / calibration_dir
+        self.images_bin = self.calib_dir / "images.bin"
+        self.images_txt = self.calib_dir / "images.txt"
+    
+    def read_image_names(self):
+        """Read image names from COLMAP calibration data.
+        
+        Returns:
+            List of image names (strings) from the calibration data, or empty list if failed.
+        """
+        # Try binary format first
+        if self.images_bin.exists():
+            try:
+                images_data = read_images_binary(self.images_bin)
+                image_names = [img.name for img in images_data.values()]
+                print(f"📊 Read {len(image_names)} image names from {self.images_bin}")
+                return image_names
+            except Exception as e:
+                print(f"⚠️ Warning: Could not read {self.images_bin}: {e}")
+        
+        # Fall back to text format
+        if self.images_txt.exists():
+            try:
+                return self._parse_images_txt()
+            except Exception as e:
+                print(f"⚠️ Warning: Could not read {self.images_txt}: {e}")
+        
+        return []
+    
+    def _parse_images_txt(self):
+        """Parse image names from images.txt file using the existing COLMAP text reader."""
+        try:
+            images_data = read_images_text(self.images_txt)
+            image_names = [img.name for img in images_data.values()]
+            print(f"📊 Read {len(image_names)} image names from {self.images_txt}")
+            return image_names
+        except Exception as e:
+            print(f"❌ Error parsing {self.images_txt}: {e}")
+            return []
+    
+    def get_existing_image_paths(self, image_names):
+        """Convert image names to existing file paths.
+        
+        Args:
+            image_names: List of image name strings (relative to images/ directory)
+            
+        Returns:
+            Tuple of (existing_paths, missing_paths)
+        """
+        images_dir = self.colmap_path / "images"
+        existing_paths = []
+        missing_paths = []
+        
+        for img_name in image_names:
+            img_path = images_dir / img_name  # COLMAP paths are relative to images/ directory
+            if img_path.exists():
+                existing_paths.append(img_path)
+            else:
+                missing_paths.append(img_path)
+        
+        return existing_paths, missing_paths
+
+
+def get_colmap_image_list(colmap_path, calibration_dir, max_images=None):
+    """
+    Get a limited list of image files for processing based on COLMAP calibration data.
+    
+    Args:
+        colmap_path: Path to COLMAP dataset
+        calibration_dir: Directory containing COLMAP calibration data relative to dataset path
+        max_images: Maximum number of images to include (None = all)
+        
+    Returns:
+        List of image file paths, limited to max_images
+    """
+    reader = ColmapImageReader(colmap_path, calibration_dir)
+    image_names = reader.read_image_names()
+    
+    if not image_names:
+        print(f"⚠️ Warning: Could not read image names from calibration data, falling back to directory scan")
+        # Fallback: scan the images directory
+        images_dir = get_images_directory_from_colmap(colmap_path, calibration_dir)
+        return get_limited_image_list(images_dir, max_images)
+    
+    # Convert image names to existing file paths
+    existing_paths, missing_paths = reader.get_existing_image_paths(image_names)
+    
+    # Report missing images
+    if missing_paths:
+        print(f"⚠️ Warning: {len(missing_paths)} images not found on disk:")
+        for i, missing in enumerate(missing_paths[:5]):  # Show first 5
+            print(f"   Missing: {missing}")
+        if len(missing_paths) > 5:
+            print(f"   ... and {len(missing_paths) - 5} more missing images")
+    
+    if not existing_paths:
+        images_dir = Path(colmap_path) / "images"
+        raise FileNotFoundError(f"No images found from calibration data. Expected images relative to: {images_dir}")
+    
+    # Sort for consistent ordering and apply limit
+    existing_paths = sorted(existing_paths)
+    return _apply_image_limit(existing_paths, image_names, max_images)
+
+
+def _apply_image_limit(image_paths, original_names, max_images):
+    """Apply image limit and provide informative logging."""
+    if max_images is not None and len(image_paths) > max_images:
+        selected_images = image_paths[:max_images]
+        print(f"📊 Image selection for quick testing:")
+        print(f"   Total images in calibration data: {len(original_names)}")
+        print(f"   Images found on disk: {len(image_paths)}")
+        print(f"   Selected for processing: {len(selected_images)}")
+        print(f"   Using first {max_images} images alphabetically")
+        return selected_images
+    else:
+        print(f"📊 Processing all {len(image_paths)} images from calibration data")
+        return image_paths
+
+
 def get_limited_image_list(images_dir, max_images=None):
     """
-    Get a limited list of image files for processing.
+    Get a limited list of image files for processing (fallback method).
     
     Args:
         images_dir: Path to images directory
@@ -340,7 +617,7 @@ def get_limited_image_list(images_dir, max_images=None):
     all_images = []
     
     for ext in image_extensions:
-        all_images.extend(images_dir.glob(f"*{ext}"))
+        all_images.extend(images_dir.rglob(f"*{ext}"))  # Use rglob for recursive search
     
     # Sort for consistent ordering
     all_images = sorted(all_images)
@@ -360,7 +637,10 @@ def get_limited_image_list(images_dir, max_images=None):
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Create a complete COLMAP G-buffer dataset from an existing COLMAP dataset",
+        description="Create a complete COLMAP G-buffer dataset from an existing COLMAP dataset. "
+                   "Image paths and resolution are automatically detected from COLMAP calibration data "
+                   "(image paths are relative to the images/ directory). Supports both binary and text "
+                   "COLMAP formats with automatic camera parameter scaling.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
@@ -391,6 +671,13 @@ def parse_arguments():
         type=str, 
         default="checkpoints",
         help="Directory containing model checkpoints relative to cosmos_path (default: checkpoints)"
+    )
+    
+    parser.add_argument(
+        "--calibration_dir", 
+        type=str, 
+        default="sparse/0",
+        help="Directory containing COLMAP calibration data relative to dataset path (default: sparse/0)"
     )
     
     parser.add_argument(
@@ -451,28 +738,131 @@ def setup_cosmos_environment(cosmos_path):
     return cosmos_path
 
 
-def detect_image_resolution(colmap_path):
+def get_images_directory_from_colmap(colmap_path, calibration_dir):
     """
-    Auto-detect image resolution from COLMAP dataset images.
+    Extract the images directory from COLMAP calibration data.
     
-    Returns the most common resolution found in the images directory.
+    Args:
+        colmap_path: Path to COLMAP dataset
+        calibration_dir: Directory containing COLMAP calibration data relative to dataset path
+        
+    Returns:
+        Path to the directory containing the images
     """
-    colmap_path = Path(colmap_path)
-    images_dir = colmap_path / "images"
+    reader = ColmapImageReader(colmap_path, calibration_dir)
+    image_names = reader.read_image_names()
     
-    if not images_dir.exists():
-        raise ValueError(f"Images directory not found: {images_dir}")
+    if not image_names:
+        # Fallback to assuming "images" directory
+        print(f"⚠️ Warning: Could not read image names from calibration data, assuming 'images/' directory")
+        return Path(colmap_path) / "images"
     
-    # Find image files
-    image_files = []
-    for ext in ['.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG']:
-        image_files.extend(images_dir.glob(f"*{ext}"))
+    print(f"📊 Found {len(image_names)} image entries in calibration data")
+    return _determine_images_directory(Path(colmap_path), image_names)
+
+
+def _determine_images_directory(colmap_path, image_names):
+    """Determine the images directory based on image name patterns."""
+    # Determine common directory from image paths
+    image_paths = [Path(name) for name in image_names[:10]]  # Sample first 10 for efficiency
+    
+    # Check if images have directory components
+    directories = set()
+    for img_path in image_paths:
+        if img_path.parent != Path('.'):
+            directories.add(img_path.parent)
+        else:
+            directories.add(Path('.'))  # Images are in root
+    
+    if len(directories) == 1:
+        # All images are in the same subdirectory
+        common_dir = list(directories)[0]
+        if common_dir == Path('.'):
+            images_directory = colmap_path
+            print(f"📁 Images are in dataset root directory: {images_directory}")
+        else:
+            images_directory = colmap_path / common_dir
+            print(f"📁 Images are in subdirectory: {images_directory} (from calibration: {common_dir})")
+    else:
+        # Images are in multiple directories, find common parent
+        images_directory = _find_common_parent_directory(colmap_path, directories)
+    
+    return images_directory
+
+
+def _find_common_parent_directory(colmap_path, directories):
+    """Find common parent directory for images in multiple directories."""
+    if all(d != Path('.') for d in directories):
+        # Find common parent directory
+        common_parts = None
+        for directory in directories:
+            parts = directory.parts
+            if common_parts is None:
+                common_parts = parts
+            else:
+                # Find common prefix
+                common_parts = tuple(part for part, common_part in zip(parts, common_parts) if part == common_part)
+        
+        if common_parts:
+            common_dir = Path(*common_parts)
+            images_directory = colmap_path / common_dir
+            print(f"📁 Images are in multiple subdirectories under: {images_directory} (common: {common_dir})")
+        else:
+            images_directory = colmap_path
+            print(f"📁 Images are in multiple directories, using dataset root: {images_directory}")
+    else:
+        images_directory = colmap_path
+        print(f"📁 Images are in dataset root and subdirectories: {images_directory}")
+    
+    return images_directory
+
+
+def detect_image_resolution(colmap_path, calibration_dir):
+    """
+    Auto-detect image resolution from COLMAP dataset images using calibration data.
+    
+    Args:
+        colmap_path: Path to COLMAP dataset
+        calibration_dir: Directory containing COLMAP calibration data relative to dataset path
+        
+    Returns:
+        Tuple of (height, width) for the most common resolution found
+    """
+    reader = ColmapImageReader(colmap_path, calibration_dir)
+    image_names = reader.read_image_names()
+    
+    if not image_names:
+        raise ValueError(f"Could not read image names from calibration data in {reader.calib_dir}")
+    
+    print(f"📊 Found {len(image_names)} image names in calibration data:")
+    for i, name in enumerate(image_names[:5]):  # Show first 5
+        print(f"   {i+1}. {name}")
+    if len(image_names) > 5:
+        print(f"   ... and {len(image_names) - 5} more")
+    
+    # Convert image names to existing file paths
+    image_files, missing_files = reader.get_existing_image_paths(image_names)
+    
+    print(f"📊 Found {len(image_files)} existing images, {len(missing_files)} missing images")
     
     if not image_files:
-        raise ValueError(f"No image files found in {images_dir}")
+        if missing_files:
+            print(f"❌ No images found. First few missing paths:")
+            for missing in missing_files[:3]:
+                print(f"   Missing: {missing}")
+            if len(missing_files) > 3:
+                print(f"   ... and {len(missing_files) - 3} more missing images")
+        
+        images_dir = Path(colmap_path) / "images"
+        raise ValueError(f"No image files found from calibration data. Expected images relative to: {images_dir}")
     
     print(f"🔍 Analyzing {len(image_files)} images to detect resolution...")
     
+    return _detect_resolution_from_images(image_files)
+
+
+def _detect_resolution_from_images(image_files):
+    """Detect the most common resolution from a list of image files."""
     # Sample a subset of images for resolution detection
     sample_size = min(10, len(image_files))
     sample_files = image_files[:sample_size]
@@ -602,7 +992,7 @@ def resize_image_to_target(input_path, output_path, target_width, target_height)
         shutil.copy2(input_path, output_path)
 
 
-def copy_and_scale_sparse_reconstruction(input_colmap_path, output_path, original_width, original_height, new_width, new_height, selected_image_names=None):
+def copy_and_scale_sparse_reconstruction(input_colmap_path, output_path, original_width, original_height, new_width, new_height, calibration_dir="sparse/0", selected_image_names=None):
     """
     Copy and scale COLMAP sparse reconstruction data for the new image resolution.
     
@@ -611,40 +1001,39 @@ def copy_and_scale_sparse_reconstruction(input_colmap_path, output_path, origina
         output_path: Path to output dataset
         original_width, original_height: Original image dimensions
         new_width, new_height: New image dimensions
+        calibration_dir: Directory containing COLMAP calibration data relative to dataset path (default: sparse/0)
         selected_image_names: Optional set of image names to include (None = all images)
     """
     input_colmap_path = Path(input_colmap_path)
     output_path = Path(output_path)
     
-    input_sparse = input_colmap_path / "sparse"
-    output_sparse = output_path / "sparse"
+    input_calib_dir = input_colmap_path / calibration_dir
+    output_calib_dir = output_path / calibration_dir
     
-    if not input_sparse.exists():
-        raise FileNotFoundError(f"Sparse reconstruction not found: {input_sparse}")
+    if not input_calib_dir.exists():
+        raise FileNotFoundError(f"Calibration directory not found: {input_calib_dir}")
     
-    print("📁 Copying and scaling COLMAP sparse reconstruction...")
-    if output_sparse.exists():
-        shutil.rmtree(output_sparse)
+    print(f"📁 Copying and scaling COLMAP calibration data from: {calibration_dir}")
+    if output_calib_dir.exists():
+        shutil.rmtree(output_calib_dir)
     
     print(f"📐 Processing camera parameters with crop-aware scaling:")
     print(f"   Original resolution: {original_width}×{original_height}")
     print(f"   Target resolution: {new_width}×{new_height}")
     
-    # Process sparse/0 directory
-    input_sparse_0 = input_sparse / "0"
-    if input_sparse_0.exists():
+    # Process calibration directory
+    if input_calib_dir.exists():
         # Create output directory structure
-        output_sparse_0 = output_sparse / "0"
-        output_sparse_0.mkdir(parents=True, exist_ok=True)
+        output_calib_dir.mkdir(parents=True, exist_ok=True)
         
-        cameras_bin = input_sparse_0 / "cameras.bin"
-        images_bin = input_sparse_0 / "images.bin"
-        points3d_bin = input_sparse_0 / "points3D.bin"
+        cameras_bin = input_calib_dir / "cameras.bin"
+        images_bin = input_calib_dir / "images.bin"
+        points3d_bin = input_calib_dir / "points3D.bin"
         
         # Check if binary files exist
         if cameras_bin.exists() and images_bin.exists():
             try:
-                print("📐 Reading, filtering, and scaling COLMAP data...")
+                print("📐 Reading, filtering, and scaling COLMAP data (binary format)...")
                 
                 # Read original data from INPUT
                 cameras = read_cameras_binary(cameras_bin)
@@ -663,14 +1052,14 @@ def copy_and_scale_sparse_reconstruction(input_colmap_path, output_path, origina
                 scaled_images = scale_colmap_images(images, original_width, original_height, new_width, new_height)
                 
                 # Write scaled data to OUTPUT
-                output_cameras_bin = output_sparse_0 / "cameras.bin"
-                output_images_bin = output_sparse_0 / "images.bin"
-                output_points3d_bin = output_sparse_0 / "points3D.bin"
+                output_cameras_bin = output_calib_dir / "cameras.bin"
+                output_images_bin = output_calib_dir / "images.bin"
+                output_points3d_bin = output_calib_dir / "points3D.bin"
                 
                 write_cameras_binary(scaled_cameras, output_cameras_bin)
                 write_images_binary(scaled_images, output_images_bin)
                 
-                print(f"✅ Wrote {len(scaled_cameras)} cameras and {len(scaled_images)} images")
+                print(f"✅ Wrote {len(scaled_cameras)} cameras and {len(scaled_images)} images (binary format)")
                 
                 # Copy points3D.bin if it exists (no scaling needed)
                 if points3d_bin.exists():
@@ -691,79 +1080,122 @@ def copy_and_scale_sparse_reconstruction(input_colmap_path, output_path, origina
                 print(f"   3. Manually scale camera parameters for resolution change: {original_width}×{original_height} → {new_width}×{new_height}")
                 
                 # Fallback: just copy without modification
-                if output_sparse.exists():
-                    shutil.rmtree(output_sparse)
-                shutil.copytree(input_sparse, output_sparse)
+                if output_calib_dir.exists():
+                    shutil.rmtree(output_calib_dir)
+                shutil.copytree(input_calib_dir, output_calib_dir)
             
         else:
-            # Try .txt files or just copy everything
-            cameras_txt = input_sparse_0 / "cameras.txt"
-            images_txt = input_sparse_0 / "images.txt"
+            # Try .txt files
+            cameras_txt = input_calib_dir / "cameras.txt"
+            images_txt = input_calib_dir / "images.txt"
+            points3d_txt = input_calib_dir / "points3D.txt"
             
             if cameras_txt.exists() and images_txt.exists():
-                print("⚠️ Warning: Text format sparse reconstruction detected.")
-                print("   Automatic scaling not implemented for .txt format.")
-                print("   Consider converting to binary format first or manually scaling camera parameters.")
-                print(f"   Resolution change needed: {original_width}×{original_height} → {new_width}×{new_height}")
+                try:
+                    print("📐 Reading, filtering, and scaling COLMAP data (text format)...")
+                    
+                    # Read original data from INPUT
+                    cameras = read_cameras_text(cameras_txt)
+                    images = read_images_text(images_txt)
+                    
+                    print(f"📊 Original data: {len(cameras)} cameras, {len(images)} images")
+                    
+                    # Filter data if image selection is specified
+                    if selected_image_names is not None:
+                        cameras, images = filter_colmap_data_by_images(cameras, images, selected_image_names)
+                    
+                    # Scale camera parameters (with crop adjustment)
+                    scaled_cameras = scale_colmap_cameras(cameras, original_width, original_height, new_width, new_height)
+                    
+                    # Scale 2D point observations in images (with crop adjustment)
+                    scaled_images = scale_colmap_images(images, original_width, original_height, new_width, new_height)
+                    
+                    # Write scaled data to OUTPUT
+                    output_cameras_txt = output_calib_dir / "cameras.txt"
+                    output_images_txt = output_calib_dir / "images.txt"
+                    output_points3d_txt = output_calib_dir / "points3D.txt"
+                    
+                    write_cameras_text(scaled_cameras, output_cameras_txt)
+                    write_images_text(scaled_images, output_images_txt)
+                    
+                    print(f"✅ Wrote {len(scaled_cameras)} cameras and {len(scaled_images)} images (text format)")
+                    
+                    # Copy points3D.txt if it exists (no scaling needed)
+                    if points3d_txt.exists():
+                        shutil.copy2(points3d_txt, output_points3d_txt)
+                        print("✅ Copied points3D.txt (no scaling needed)")
+                    else:
+                        print("⚠️ Warning: points3D.txt not found, but this is optional")
+                        
+                except Exception as e:
+                    print(f"❌ Error processing text format: {e}")
+                    print("🔄 Falling back to copy-only mode (no camera scaling)")
+                    print("   Note: Camera parameters will NOT be scaled for the new resolution!")
+                    print("   This may cause geometric inconsistencies in the dataset.")
+                    
+                    # Fallback: just copy without modification
+                    if output_calib_dir.exists():
+                        shutil.rmtree(output_calib_dir)
+                    shutil.copytree(input_calib_dir, output_calib_dir)
             else:
                 print("⚠️ No cameras.bin/txt or images.bin/txt found, copying as-is")
-            
-            # Copy everything as-is
-            if output_sparse.exists():
-                shutil.rmtree(output_sparse)
-            shutil.copytree(input_sparse, output_sparse)
+                
+                # Copy everything as-is
+                if output_calib_dir.exists():
+                    shutil.rmtree(output_calib_dir)
+                shutil.copytree(input_calib_dir, output_calib_dir)
     
     else:
-        print("⚠️ Warning: sparse/0 directory not found, copying entire sparse directory")
-        if output_sparse.exists():
-            shutil.rmtree(output_sparse)
-        shutil.copytree(input_sparse, output_sparse)
+        print(f"⚠️ Warning: {calibration_dir} directory not found")
+        raise FileNotFoundError(f"Calibration directory not found: {input_calib_dir}")
     
-    print(f"✅ Sparse reconstruction processed and saved to: {output_sparse}")
+    print(f"✅ Calibration data processed and saved to: {output_calib_dir}")
 
 
-def copy_sparse_reconstruction(input_colmap_path, output_path):
+def copy_sparse_reconstruction(input_colmap_path, output_path, calibration_dir="sparse/0"):
     """
     Legacy function - copy sparse reconstruction without scaling.
     
     Args:
         input_colmap_path: Path to input COLMAP dataset
         output_path: Path to output dataset
+        calibration_dir: Directory containing COLMAP calibration data relative to dataset path (default: sparse/0)
     """
     input_colmap_path = Path(input_colmap_path)
     output_path = Path(output_path)
     
-    # Copy sparse reconstruction directory
-    input_sparse = input_colmap_path / "sparse"
-    output_sparse = output_path / "sparse"
+    # Copy calibration directory
+    input_calib_dir = input_colmap_path / calibration_dir
+    output_calib_dir = output_path / calibration_dir
     
-    if input_sparse.exists():
-        print("📁 Copying COLMAP sparse reconstruction (no scaling)...")
-        if output_sparse.exists():
-            shutil.rmtree(output_sparse)
-        shutil.copytree(input_sparse, output_sparse)
-        print(f"✅ Sparse reconstruction copied to: {output_sparse}")
+    if input_calib_dir.exists():
+        print(f"📁 Copying COLMAP calibration data from: {calibration_dir} (no scaling)...")
+        if output_calib_dir.exists():
+            shutil.rmtree(output_calib_dir)
+        # Ensure parent directories exist
+        output_calib_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(input_calib_dir, output_calib_dir)
+        print(f"✅ Calibration data copied to: {output_calib_dir}")
         
-        # Validate copied sparse reconstruction
-        sparse_0 = output_sparse / "0"
-        if sparse_0.exists():
+        # Validate copied calibration data
+        if output_calib_dir.exists():
             required_files = ["cameras.bin", "images.bin", "points3D.bin"]
             missing_files = []
             for req_file in required_files:
-                if not (sparse_0 / req_file).exists():
+                if not (output_calib_dir / req_file).exists():
                     # Check for .txt versions
                     txt_file = req_file.replace(".bin", ".txt")
-                    if not (sparse_0 / txt_file).exists():
+                    if not (output_calib_dir / txt_file).exists():
                         missing_files.append(f"{req_file} or {txt_file}")
             
             if missing_files:
-                print(f"⚠️ Warning: Missing sparse reconstruction files: {missing_files}")
+                print(f"⚠️ Warning: Missing calibration files: {missing_files}")
             else:
-                print("✅ Sparse reconstruction validation passed")
+                print("✅ Calibration data validation passed")
         else:
-            print("⚠️ Warning: sparse/0 directory not found")
+            print(f"⚠️ Warning: {calibration_dir} directory not found after copy")
     else:
-        raise FileNotFoundError(f"Sparse reconstruction not found: {input_sparse}")
+        raise FileNotFoundError(f"Calibration directory not found: {input_calib_dir}")
 
 
 def prepare_images_for_dataset(input_colmap_path, output_path, target_width, target_height, selected_images=None):
@@ -783,44 +1215,34 @@ def prepare_images_for_dataset(input_colmap_path, output_path, target_width, tar
     input_colmap_path = Path(input_colmap_path)
     output_path = Path(output_path)
     
-    input_images_dir = input_colmap_path / "images"
+    # Always create output images in "images" directory regardless of input structure
     output_images_dir = output_path / "images"
-    
-    if not input_images_dir.exists():
-        raise ValueError(f"Input images directory not found: {input_images_dir}")
-    
-    # Create output images directory
     output_images_dir.mkdir(parents=True, exist_ok=True)
     
     # Use provided selection or find all image files  
     if selected_images is not None:
-        # Convert to full paths if they're just names
-        image_files = []
-        for img_path in selected_images:
-            if isinstance(img_path, str) or hasattr(img_path, 'name'):
-                # If it's just a name, find the full path
-                img_name = img_path if isinstance(img_path, str) else img_path.name
-                full_path = input_images_dir / img_name
-                if full_path.exists():
-                    image_files.append(full_path)
-            else:
-                image_files.append(img_path)
+        # selected_images should already be full paths from get_colmap_image_list
+        image_files = selected_images
     else:
-        # Find all image files
-        image_files = []
-        for ext in ['.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG']:
-            image_files.extend(input_images_dir.glob(f"*{ext}"))
+        raise ValueError("selected_images must be provided (use get_colmap_image_list)")
     
     if not image_files:
-        raise ValueError(f"No image files found in {input_images_dir}")
+        raise ValueError("No image files provided")
     
     print(f"📁 Copying and resizing {len(image_files)} images to {target_width}×{target_height}...")
     
-    # Copy and resize images to exact target dimensions
+    # Copy and resize images preserving relative directory structure
+    images_base_dir = input_colmap_path / "images"
     with tqdm(total=len(image_files), desc="📷 Processing images", unit="images") as pbar:
         for img_file in image_files:
-            pbar.set_postfix_str(img_file.name)
-            output_img_path = output_images_dir / img_file.name
+            # Preserve the relative path structure from the images/ directory
+            relative_path = img_file.relative_to(images_base_dir)
+            pbar.set_postfix_str(str(relative_path))
+            output_img_path = output_images_dir / relative_path
+            
+            # Create parent directories if needed
+            output_img_path.parent.mkdir(parents=True, exist_ok=True)
+            
             resize_image_to_target(img_file, output_img_path, target_width, target_height)
             pbar.update(1)
     
@@ -841,18 +1263,20 @@ def prepare_colmap_images_for_extraction(images_dir, temp_dir, downsample_factor
     temp_images_dir.mkdir(parents=True, exist_ok=True)
     
     # Copy images to temp directory (they're already resized)
+    # Use recursive search to find images in subdirectories
     image_files = []
     for ext in ['.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG']:
-        image_files.extend(images_dir.glob(f"*{ext}"))
+        image_files.extend(images_dir.rglob(f"*{ext}"))  # rglob for recursive search
     
     if not image_files:
-        raise ValueError(f"No image files found in {images_dir}")
+        raise ValueError(f"No image files found in {images_dir} (searched recursively)")
     
     print(f"📂 Preparing {len(image_files)} images for G-buffer extraction...")
     
     with tqdm(total=len(image_files), desc="📂 Copying for extraction", unit="images") as pbar:
         for img_file in image_files:
             pbar.set_postfix_str(img_file.name)
+            # Flatten the structure for G-buffer extraction (cosmos1-renderer expects flat structure)
             output_path = temp_images_dir / img_file.name
             shutil.copy2(img_file, output_path)
             pbar.update(1)
@@ -990,7 +1414,7 @@ def extract_gbuffers(images_dir, cosmos_path, checkpoint_dir, output_dir, height
     return expected_gbuffer_dir
 
 
-def organize_final_dataset(gbuffer_dir, output_path, input_colmap_path, height, width, downsample_factor, max_images=None):
+def organize_final_dataset(gbuffer_dir, output_path, input_colmap_path, height, width, downsample_factor, calibration_dir="sparse/0", max_images=None):
     """
     Organize the extracted G-buffers and create final dataset metadata.
     
@@ -1000,6 +1424,7 @@ def organize_final_dataset(gbuffer_dir, output_path, input_colmap_path, height, 
         input_colmap_path: Original input COLMAP dataset path
         height, width: Processing resolution
         downsample_factor: Downsampling factor used
+        calibration_dir: Directory containing COLMAP calibration data relative to dataset path
         max_images: Optional maximum number of images processed (for testing)
     """
     gbuffer_dir = Path(gbuffer_dir)
@@ -1038,12 +1463,13 @@ def organize_final_dataset(gbuffer_dir, output_path, input_colmap_path, height, 
         "description": "Complete COLMAP G-buffer dataset with images, sparse reconstruction, and G-buffers",
         "source_info": {
             "original_colmap_path": str(input_colmap_path),
+            "calibration_directory": calibration_dir,
             "creation_tool": "create_colmap_gbuffers.py",
             "cosmos_renderer": "cosmos1-diffusion-renderer"
         },
         "dataset_structure": {
             "images/": "Resized images matching G-buffer extraction resolution",
-            "sparse/": "COLMAP sparse reconstruction (cameras, images, points3D)",
+            f"{calibration_dir.split('/')[0]}/": f"COLMAP calibration data ({calibration_dir})",
             "gbuffers/": "Extracted G-buffer files organized by image name",
             "dataset_info.json": "This metadata file"
         },
@@ -1116,7 +1542,7 @@ def main():
     cosmos_path = setup_cosmos_environment(args.cosmos_path)
     
     # Detect original resolution from input dataset (needed for camera scaling)
-    original_height, original_width = detect_image_resolution(input_colmap_path)
+    original_height, original_width = detect_image_resolution(input_colmap_path, args.calibration_dir)
     
     # Determine final resolution for G-buffer extraction
     if args.force_resolution:
@@ -1139,10 +1565,17 @@ def main():
             width = int(width / args.downsample_factor)
             print(f"Applying downsample factor {args.downsample_factor} to detected resolution")
     
-    # Determine which images to process
-    input_images_dir = input_colmap_path / "images"
-    selected_images = get_limited_image_list(input_images_dir, args.max_images)
-    selected_image_names = {img.name for img in selected_images}
+    # Determine which images to process (read from calibration data)
+    selected_images = get_colmap_image_list(input_colmap_path, args.calibration_dir, args.max_images)
+    # Extract relative paths (image names as stored in COLMAP data) by removing the images/ prefix
+    images_dir = Path(input_colmap_path) / "images"
+    selected_image_names = {str(img.relative_to(images_dir)) for img in selected_images}
+    
+    print(f"📊 Selected {len(selected_images)} images for processing:")
+    for i, name in enumerate(sorted(selected_image_names)[:3]):  # Show first 3
+        print(f"   {i+1}. {name}")
+    if len(selected_image_names) > 3:
+        print(f"   ... and {len(selected_image_names) - 3} more")
     
     print(f"Dataset creation settings:")
     print(f"  - Original image resolution: {original_width}×{original_height}")
@@ -1150,6 +1583,7 @@ def main():
     print(f"  - G-buffer extraction resolution: {width}×{height}")
     print(f"  - Downsample factor: {args.downsample_factor}")
     print(f"  - Number of frames: {args.num_frames}")
+    print(f"  - Calibration directory: {args.calibration_dir}")
     if args.max_images is not None:
         print(f"  - Image limit (for testing): {args.max_images}")
     if args.height is None or args.width is None:
@@ -1172,7 +1606,7 @@ def main():
             print("\n1. Copying and scaling COLMAP sparse reconstruction...")
             copy_and_scale_sparse_reconstruction(
                 input_colmap_path, output_path, 
-                original_width, original_height, width, height, selected_image_names
+                original_width, original_height, width, height, args.calibration_dir, selected_image_names
             )
             
             # Step 2: Prepare images for the dataset
@@ -1201,7 +1635,7 @@ def main():
             effective_downsample_factor = original_width / width  # or original_height / height
             organize_final_dataset(
                 gbuffer_dir, output_path, input_colmap_path, 
-                height, width, effective_downsample_factor, args.max_images
+                height, width, effective_downsample_factor, args.calibration_dir, args.max_images
             )
             
             print(f"\n=== COLMAP G-Buffer Dataset Creation Complete ===")
@@ -1210,7 +1644,7 @@ def main():
             print(f"Dataset structure:")
             print(f"  {output_path}/")
             print(f"  ├── images/              # Resized images ({width}×{height})")
-            print(f"  ├── sparse/             # COLMAP reconstruction")
+            print(f"  ├── {args.calibration_dir.split('/')[0]}/{'':12} # COLMAP calibration data ({args.calibration_dir})")
             print(f"  ├── gbuffers/           # Extracted G-buffers")
             print(f"  └── dataset_info.json   # Dataset metadata")
             print(f"")

@@ -407,30 +407,32 @@ class GUI:
         - Camera-space normals (optional): Consistent view like normal maps, easier for surface detail inspection
         
         Args:
-            pred_normals_world: World-space normals [B, H, W, 3]
+            pred_normals_world: World-space normals from renderer (various formats)
             T_to_world: Transformation matrix from ray space to world space [B, 4, 4]
             
         Returns:
-            Camera-space normals [B, H, W, 3] or None if input is None
+            Camera-space normals in same format as input, or None if input is None
         """
         if pred_normals_world is None:
             return None
-            
+        
+        H, W, _ = pred_normals_world.shape
+        
         # Get world-to-camera transformation (inverse of camera-to-world)
-        T_to_camera = torch.linalg.inv(T_to_world)  # [B, 4, 4]
+        # T_to_world is [B, 4, 4], take first batch element since we have single image
+        T_to_camera = torch.linalg.inv(T_to_world[0])  # [4, 4]
         
         # Extract rotation part (top-left 3x3) and transpose for normal transformation
-        R_to_camera = T_to_camera[:, :3, :3].transpose(-2, -1)  # [B, 3, 3]
+        R_to_camera = T_to_camera[:3, :3].T  # [3, 3]
         
-        # Reshape normals for batch matrix multiplication
-        B, H, W, _ = pred_normals_world.shape
-        normals_flat = pred_normals_world.view(B, -1, 3)  # [B, H*W, 3]
+        # Reshape normals for matrix multiplication: [H, W, 3] -> [H*W, 3]
+        normals_flat = pred_normals_world.view(-1, 3)  # [H*W, 3]
         
         # Transform normals: N_camera = R_to_camera^T @ N_world
-        normals_camera_flat = torch.bmm(normals_flat, R_to_camera)  # [B, H*W, 3]
+        normals_camera_flat = torch.mm(normals_flat, R_to_camera)  # [H*W, 3]
         
-        # Reshape back to original dimensions
-        pred_normals_camera = normals_camera_flat.view(B, H, W, 3)
+        # Reshape back to image format
+        pred_normals_camera = normals_camera_flat.view(H, W, 3)
         
         # Normalize to unit length
         pred_normals_camera = torch.nn.functional.normalize(pred_normals_camera, p=2, dim=-1)

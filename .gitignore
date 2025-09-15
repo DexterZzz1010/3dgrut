@@ -25,6 +25,8 @@ thirdparty/simple-knn/simple_knn.egg-info
 threedgrt_tracer/.ninja_log
 threedgrt_tracer/include/3dgrt/kernels/slang/*.cuh*
 *.egg-info
+*.swp
+*.sql
 .idea
 
 grid_search
@@ -32,6 +34,7 @@ grid_search
 libs/
 results/
 thirdparty/ncore/
+threedgrut_playground/assets/
 
 playground/assets/
 

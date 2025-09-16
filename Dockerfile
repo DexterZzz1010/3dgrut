@@ -43,15 +43,27 @@ ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;9.0"
 RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb && \
     dpkg -i cuda-keyring_1.0-1_all.deb && \
     apt-get update && \
-    apt-get install -y \
+    apt-get install -y  \
+    cuda-compiler-11-8 \
     cuda-nvcc-11-8 \
+    cuda-nvrtc-11-8 \
+    cuda-nvrtc-dev-11-8 \  
+    cuda-command-line-tools-11-8 \
     cuda-cudart-dev-11-8 \
     cuda-driver-dev-11-8 \
+    cuda-libraries-dev-11-8 \
+    cuda-nvrtc-dev-11-8 \
+    cuda-nvml-dev-11-8 \
+    cuda-nvprof-11-8 \
+    cuda-nvtx-11-8 \
+    cuda-sanitizer-11-8 \
+    libcufile-dev-11-8 \
     libcublas-dev-11-8 \
     libcufft-dev-11-8 \
     libcurand-dev-11-8 \
     libcusolver-dev-11-8 \
     libcusparse-dev-11-8 \
+    libnpp-dev-11-8 \
     && rm -f cuda-keyring_1.0-1_all.deb && \
     rm -rf /var/lib/apt/lists/*
 # CUDA 环境变量

@@ -16,6 +16,7 @@
 from .dataset_nerf import NeRFDataset
 from .dataset_colmap import ColmapDataset
 from .dataset_scannetpp import ScannetppDataset
+from .dataset_fisheye import FisheyeDataset  # 新增导入
 
 
 def make(name: str, config, ray_jitter):
@@ -60,38 +61,61 @@ def make(name: str, config, ray_jitter):
                 downsample_factor=config.dataset.downsample_factor,
                 test_split_interval=config.dataset.test_split_interval,
             )
+        case "fisheye":  # 新增fisheye数据集类型
+            train_dataset = FisheyeDataset(
+                config.path,
+                split="train",
+                ray_jitter=ray_jitter,
+                downsample_factor=config.dataset.downsample_factor,
+                test_split_interval=config.dataset.test_split_interval,
+                image_name_filter=getattr(config.dataset, 'image_name_filter', None),
+            )
+            val_dataset = FisheyeDataset(
+                config.path,
+                split="val",
+                downsample_factor=config.dataset.downsample_factor,
+                test_split_interval=config.dataset.test_split_interval,
+                image_name_filter=getattr(config.dataset, 'image_name_filter', None),
+            )
         case _:
             raise ValueError(
-                f'Unsupported dataset type: {config.dataset.type}. Choose between: ["colmap", "nerf", "scannetpp"].'
+                f'Unsupported dataset type: {config.dataset.type}. Choose between: ["colmap", "nerf", "scannetpp", "fisheye"].'
             )
 
     return train_dataset, val_dataset
 
 
-def make_test(name: str, config):
+def make_test(name: str, config):  
     match name:
         case "nerf":
-            dataset = NeRFDataset(
+            return NeRFDataset(
                 config.path,
-                split="test",
+                split="val",
                 bg_color=config.model.background.color,
             )
         case "colmap":
-            dataset = ColmapDataset(
+            return ColmapDataset(
                 config.path,
                 split="val",
                 downsample_factor=config.dataset.downsample_factor,
                 test_split_interval=config.dataset.test_split_interval,
             )
         case "scannetpp":
-            dataset = ScannetppDataset(
+            return ScannetppDataset(
                 config.path,
                 split="val",
                 downsample_factor=config.dataset.downsample_factor,
                 test_split_interval=config.dataset.test_split_interval,
             )
+        case "fisheye":  # 新增fisheye测试数据集
+            return FisheyeDataset(
+                config.path,
+                split="val",
+                downsample_factor=config.dataset.downsample_factor,
+                test_split_interval=config.dataset.test_split_interval,
+                image_name_filter=getattr(config.dataset, 'image_name_filter', None),
+            )
         case _:
             raise ValueError(
-                f'Unsupported dataset type: {config.dataset.type}. Choose between: ["colmap", "nerf", "scannetpp"].'
+                f'Unsupported dataset type: {config.dataset.type}. Choose between: ["colmap", "nerf", "scannetpp", "fisheye"].'
             )
-    return dataset

@@ -11,3 +11,5 @@ python train.py --config-name apps/scannetpp_3dgrt.yaml path=data/fisheye out_di
 
 
 sbatch --partition=ztestpreemp scripts/3dgrut_train.sh --config-name apps/scannetpp_3dgrt.yaml --binary
+
+sbatch --partition=ztestpreemp scripts/3dgrut_train.sh --config-name apps/fisheye_3dgut.yaml --binary

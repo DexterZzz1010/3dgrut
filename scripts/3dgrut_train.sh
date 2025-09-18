@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH -c 32
 #SBATCH --mem=100G
 #SBATCH --time=unlimited
@@ -10,10 +10,11 @@
 echo "$PARTITION_NAME"
 
 data_dir="/staging/fisheye/mthesis/data"
-# SINGULARITY_IMAGE="/staging/fisheye/mthesis/docker/3dgrut.sif"
-SINGULARITY_IMAGE="/workspaces/s0002322/src/3dgrut/3dgrut.sif"
+SINGULARITY_IMAGE="/staging/fisheye/mthesis/docker/3dgrut-ngc.sif"
+# SINGULARITY_IMAGE="/workspaces/s0002322/src/3dgrut/3dgrut-ngc.sif"
 ORIGINAL_CODE_DIR="/workspaces/s0002322/src/3dgrut"
-config_name="apps/scannetpp_3dgrt.yaml"
+# config_name="apps/scannetpp_3dgut.yaml"
+config_name="apps/fisheye_3dgut.yaml"
 
 # Parse command-line arguments
 binary=""
@@ -37,7 +38,7 @@ TEMP_CODE_DIR=$(mktemp -d /staging/fisheye/mthesis/runs/"${git_commit}_3dgrut_${
 cp -r "$ORIGINAL_CODE_DIR"/* "$TEMP_CODE_DIR"
 
 
-experiment_name="fisheye_3dgrt"
+experiment_name="fisheye_3dgut"
 model_name="${git_commit}_${experiment_name}_$(date +"%Y-%m-%d_%H-%M-%S")"
 out_dir="runs/${model_name}"
 
@@ -49,13 +50,6 @@ singularity exec --nv \
     --pwd /3dgrut \
     "$SINGULARITY_IMAGE" \
     bash -c "
-    export PYTHONUSERBASE=/tmp/python_user
-    export PATH=$PYTHONUSERBASE/bin:$PATH
-    export PYTHONPATH=$PYTHONUSERBASE/lib/python3.11/site-packages:$PYTHONPATH
-    mkdir -p $PYTHONUSERBASE
-    pip install --user nvidia-cuda-nvrtc-cu11
-    python -c 'import torch; print(torch.cuda.is_available())'
-    nvidia-smi
     export CC=/usr/bin/gcc-11
     export CXX=/usr/bin/g++-11
     export CUDAHOSTCXX=/usr/bin/g++-11
@@ -68,47 +62,6 @@ singularity exec --nv \
         dataset.downsample_factor=2
     "
 
-# singularity exec --nv \
-#     --bind "$TEMP_CODE_DIR":/3dgrut \
-#     --pwd /3dgrut \
-#     "$SINGULARITY_IMAGE" \
-#     bash -c "
-#     source /opt/conda/etc/profile.d/conda.sh
-#     conda activate 3dgrut
-    
-#     python -c '
-# import sys
-# sys.path.insert(0, \"/3dgrut\")
 
-# print(\"=== 测试基础导入 ===\")
-# import torch
-# import threedgrt_tracer
-# print(\"导入成功\")
-
-# print(\"=== 测试配置创建 ===\")
-# from omegaconf import DictConfig
-# test_conf = DictConfig({
-#     \"render\": {
-#         \"particle_radiance_sph_degree\": 2,
-#         \"particle_kernel_degree\": 3,
-#         \"particle_kernel_min_response\": 0.01,
-#         \"particle_kernel_min_alpha\": 0.01,
-#         \"particle_kernel_max_alpha\": 0.99,
-#         \"enable_normals\": False,
-#         \"primitive_type\": \"gaussian\"
-#     }
-# })
-# print(\"配置创建成功\")
-
-# print(\"=== 测试 Tracer 初始化（可能导致段错误）===\")
-# try:
-#     tracer = threedgrt_tracer.Tracer(test_conf)
-#     print(\"Tracer 创建成功！\")
-# except Exception as e:
-#     print(f\"Tracer 创建失败: {e}\")
-#     import traceback
-#     traceback.print_exc()
-# '
-#     "
 #
 #EOF

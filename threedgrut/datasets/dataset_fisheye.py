@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+import numpy as np
 from threedgrut.utils.logger import logger
 
 from .dataset_scannetpp import ScannetppDataset
@@ -44,6 +45,9 @@ class FisheyeDataset(ScannetppDataset):
         super(FisheyeDataset, self).__init__(
             path, device, split, downsample_factor, test_split_interval, ray_jitter
         )
+
+        # if hasattr(self, '_custom_mask_paths'):
+        #     self.mask_paths = np.array(self._custom_mask_paths, dtype=str)
 
     def _should_include_image(self, image_name: str) -> bool:
         """
@@ -138,6 +142,40 @@ class FisheyeDataset(ScannetppDataset):
 
         self.cam_extrinsics = cam_extrinsics
         self.cam_intrinsics = cam_intrinsics
+
+        # self._setup_custom_mask_paths()
+
+    def _setup_custom_mask_paths(self):
+        """为colmap/masks_rectified/结构设置mask路径"""
+        logger.info("Setting up custom mask paths for colmap/masks_rectified/ structure")
+        
+        custom_mask_paths = []
+        masks_found = 0
+        
+        for extr in self.cam_extrinsics:  # 使用已过滤的外参
+            image_name = extr.name  # 例如: "FC/original_images_000000.jpg"
+            base_name = os.path.splitext(image_name)[0]  # "FC/original_images_000000" 
+            
+            # 尝试不同的mask文件扩展名
+            mask_candidates = [
+                os.path.join(self.path, "colmap/masks_rectified", base_name + ".png"),
+                os.path.join(self.path, "colmap/masks_rectified", base_name + ".jpg"),
+                os.path.join(self.path, "colmap/masks_rectified", image_name),  # 原扩展名
+            ]
+            
+            # 选择第一个存在的文件
+            selected_path = mask_candidates[0]  # 默认.png
+            for candidate in mask_candidates:
+                if os.path.exists(candidate):
+                    selected_path = candidate
+                    masks_found += 1
+                    break
+                    
+            custom_mask_paths.append(selected_path)
+        
+        logger.info(f"Custom mask setup: {masks_found}/{len(custom_mask_paths)} masks found")
+        
+        self._custom_mask_paths = custom_mask_paths
 
     def get_images_folder(self):
         """

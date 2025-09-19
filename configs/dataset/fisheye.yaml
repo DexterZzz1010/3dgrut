@@ -4,5 +4,7 @@ test_split_interval: 8
 # 图像过滤配置 - 只保留FC文件夹下的图像
 image_name_filter:
   enabled: true
-  include_prefixes: ["FC/"]
-  exclude_prefixes: ["FISHB/", "FISHF/", "FISHL/", "FISHC/"]
+  # include_prefixes: ["FC/"]
+  # exclude_prefixes: ["FISHB/", "FISHF/", "FISHL/", "FISHR/"]
+  include_prefixes: ["FISHB/", "FISHF/", "FISHL/", "FISHR/"]
+  exclude_prefixes: ["FC/"]

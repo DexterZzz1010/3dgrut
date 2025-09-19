@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 #SBATCH -c 32
 #SBATCH --mem=100G
 #SBATCH --time=unlimited
@@ -34,7 +34,7 @@ git_commit=$(git rev-parse --short HEAD)
 cd - || exit
 
 
-TEMP_CODE_DIR=$(mktemp -d /staging/fisheye/mthesis/runs/"${git_commit}_3dgrut_${SLURM_JOB_ID}_XXXXXX")
+TEMP_CODE_DIR=$(mktemp -d /staging/fisheye/mthesis/3dgrut/runs/"${git_commit}_3dgrut_${SLURM_JOB_ID}_XXXXXX")
 cp -r "$ORIGINAL_CODE_DIR"/* "$TEMP_CODE_DIR"
 
 
@@ -46,7 +46,7 @@ out_dir="runs/${model_name}"
 singularity exec --nv \
     --bind "$TEMP_CODE_DIR":/3dgrut \
     --bind "$data_dir":/3dgrut/data \
-    --bind /staging/fisheye/mthesis/runs:/3dgrut/runs \
+    --bind /staging/fisheye/mthesis/3dgrut/runs:/3dgrut/runs \
     --pwd /3dgrut \
     "$SINGULARITY_IMAGE" \
     bash -c "

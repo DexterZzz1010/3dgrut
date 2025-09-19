@@ -69,6 +69,7 @@ def make(name: str, config, ray_jitter):
                 downsample_factor=config.dataset.downsample_factor,
                 test_split_interval=config.dataset.test_split_interval,
                 image_name_filter=getattr(config.dataset, 'image_name_filter', None),
+                mask_config=getattr(config.dataset, 'mask_config', None),  # 新增
             )
             val_dataset = FisheyeDataset(
                 config.path,
@@ -76,6 +77,7 @@ def make(name: str, config, ray_jitter):
                 downsample_factor=config.dataset.downsample_factor,
                 test_split_interval=config.dataset.test_split_interval,
                 image_name_filter=getattr(config.dataset, 'image_name_filter', None),
+                mask_config=getattr(config.dataset, 'mask_config', None),  # 新增
             )
         case _:
             raise ValueError(
@@ -114,6 +116,7 @@ def make_test(name: str, config):
                 downsample_factor=config.dataset.downsample_factor,
                 test_split_interval=config.dataset.test_split_interval,
                 image_name_filter=getattr(config.dataset, 'image_name_filter', None),
+                mask_config=getattr(config.dataset, 'mask_config', None),  # 新增
             )
         case _:
             raise ValueError(

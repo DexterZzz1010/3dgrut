@@ -398,17 +398,29 @@ class Trainer3DGRUT:
         rgb_pred = outputs["pred_rgb"]
         mask = gpu_batch.mask
         
-        # Mask out the invalid pixels if the mask is provided
+        # # Debug logging
+        # logger.info(f"Mask used: {mask is not None}")
+        # if mask is not None:
+        #     logger.info(f"Mask shape: {mask.shape}, RGB shape: {rgb_gt.shape}")
+        #     logger.info(f"Mask range: [{mask.min():.3f}, {mask.max():.3f}]")
+        
+        # Apply mask properly - compute loss only on valid pixels
         if mask is not None:
-            rgb_gt = rgb_gt * mask
-            rgb_pred = rgb_pred * mask
+            # Flatten to handle dimension mismatch properly
+            valid_pixels = (mask > 0.5).squeeze(-1)  # Remove last dim: [1,H,W,1] -> [1,H,W]
+            rgb_gt_masked = rgb_gt[valid_pixels]
+            rgb_pred_masked = rgb_pred[valid_pixels]
+            # logger.info(f"Valid pixels: {valid_pixels.sum()} / {valid_pixels.numel()}")
+        else:
+            rgb_gt_masked = rgb_gt
+            rgb_pred_masked = rgb_pred
 
         # L1 loss
         loss_l1 = torch.zeros(1, device=self.device)
         lambda_l1 = 0.0
         if self.conf.loss.use_l1:
             with torch.cuda.nvtx.range(f"loss-l1"):
-                loss_l1 = torch.abs(rgb_pred - rgb_gt).mean()
+                loss_l1 = torch.abs(rgb_pred_masked - rgb_gt_masked).mean()
                 lambda_l1 = self.conf.loss.lambda_l1
 
         # L2 loss
@@ -416,16 +428,24 @@ class Trainer3DGRUT:
         lambda_l2 = 0.0
         if self.conf.loss.use_l2:
             with torch.cuda.nvtx.range(f"loss-l2"):
-                loss_l2 = torch.nn.functional.mse_loss(outputs["pred_rgb"], rgb_gt)
+                loss_l2 = torch.nn.functional.mse_loss(rgb_pred_masked, rgb_gt_masked)
                 lambda_l2 = self.conf.loss.lambda_l2
 
-        # DSSIM loss
+        # DSSIM loss - needs special handling for mask
         loss_ssim = torch.zeros(1, device=self.device)
         lambda_ssim = 0.0
         if self.conf.loss.use_ssim:
             with torch.cuda.nvtx.range(f"loss-ssim"):
-                rgb_gt_full = torch.permute(rgb_gt, (0, 3, 1, 2))
-                pred_rgb_full = torch.permute(rgb_pred, (0, 3, 1, 2))
+                if mask is not None:
+                    # For SSIM, we need to keep spatial structure, so zero out masked regions
+                    rgb_gt_ssim = rgb_gt * mask
+                    rgb_pred_ssim = rgb_pred * mask
+                else:
+                    rgb_gt_ssim = rgb_gt
+                    rgb_pred_ssim = rgb_pred
+                
+                rgb_gt_full = torch.permute(rgb_gt_ssim, (0, 3, 1, 2))
+                pred_rgb_full = torch.permute(rgb_pred_ssim, (0, 3, 1, 2))
                 loss_ssim = 1.0 - ssim(pred_rgb_full, rgb_gt_full)
                 lambda_ssim = self.conf.loss.lambda_ssim
 
@@ -446,7 +466,7 @@ class Trainer3DGRUT:
                 lambda_scale = self.conf.loss.lambda_scale
 
         # Total loss
-        loss = lambda_l1 * loss_l1 + lambda_ssim * loss_ssim + lambda_opacity * loss_opacity + lambda_scale * loss_scale
+        loss = lambda_l1 * loss_l1 + lambda_l2 * loss_l2 + lambda_ssim * loss_ssim + lambda_opacity * loss_opacity + lambda_scale * loss_scale
         return dict(total_loss=loss, l1_loss=lambda_l1 * loss_l1, l2_loss=lambda_l2 * loss_l2, ssim_loss=lambda_ssim * loss_ssim, opacity_loss=lambda_opacity * loss_opacity, scale_loss=lambda_scale * loss_scale)
 
     @torch.cuda.nvtx.range("log_validation_iter")

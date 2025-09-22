@@ -85,57 +85,56 @@ class FisheyeDataset(ScannetppDataset):
             logger.info("Mask disabled by configuration")
 
     def _setup_colmap_mask_paths(self):
-        """
-        为colmap/masks_rectified/结构设置mask路径
-        """
-        base_path = self.mask_config.get('base_path', 'colmap/masks_rectified')
-        extensions = self.mask_config.get('file_extensions', ['.png', '.jpg'])
-        fallback = self.mask_config.get('fallback_to_standard', False)
-        
-        logger.info(f"Setting up colmap mask paths from: {base_path}")
-        
-        custom_mask_paths = []
-        masks_found = 0
-        
-        for extr in self.cam_extrinsics:
-            image_name = extr.name 
-            base_name = os.path.splitext(image_name)[0]  # "FC/original_images_000000"
+            """
+            为colmap/masks_rectified/结构设置mask路径
+            """
+            base_path = self.mask_config.get('base_path', 'colmap/masks_rectified')
+            extensions = self.mask_config.get('file_extensions', ['.png', '.jpg'])
+            fallback = self.mask_config.get('fallback_to_standard', False)
             
-            mask_candidates = []
-            for ext in extensions:
+            logger.info(f"Setting up colmap mask paths from: {base_path}")
+            
+            custom_mask_paths = []
+            masks_found = 0
+            
+            for extr in self.cam_extrinsics:
+                image_name = extr.name 
+                base_name = os.path.splitext(image_name)[0]
+                
+                mask_candidates = []
+                for ext in extensions:
+                    mask_candidates.append(
+                        os.path.join(self.path, base_path, base_name + ext)
+                    )
                 mask_candidates.append(
-                    os.path.join(self.path, base_path, base_name + ext)
+                    os.path.join(self.path, base_path, image_name)
                 )
-            mask_candidates.append(
-                os.path.join(self.path, base_path, image_name)
-            )
-
-            selected_path = None
-            for candidate in mask_candidates:
-                if os.path.exists(candidate):
-                    selected_path = candidate
-                    masks_found += 1
-                    break
+                
+                selected_path = None
+                for candidate in mask_candidates:
+                    if os.path.exists(candidate):
+                        selected_path = candidate
+                        masks_found += 1
+                        break
+                
+                if selected_path is None:
+                    if fallback:
+                        image_path = os.path.join(self.path, self.get_images_folder(), image_name)
+                        selected_path = os.path.splitext(image_path)[0] + "_mask.png"
+                    else:
+                        selected_path = mask_candidates[0]
+                        
+                custom_mask_paths.append(selected_path)
             
-            if selected_path is None:
-                if fallback:
-                    image_path = os.path.join(self.path, self.get_images_folder(), image_name)
-                    selected_path = os.path.splitext(image_path)[0] + "_mask.png"
-                    logger.debug(f"Fallback to standard path: {selected_path}")
-                else:
-                    selected_path = mask_candidates[0]
-                    
-            custom_mask_paths.append(selected_path)
-        
-        self.mask_paths = np.array(custom_mask_paths, dtype=str)
-        
-        logger.info(f"Colmap mask setup: {masks_found}/{len(custom_mask_paths)} masks found")
-        
-        if masks_found == 0:
-            logger.warning("No mask files found! Training will proceed without masks.")
-        elif masks_found < len(custom_mask_paths):
-            missing = len(custom_mask_paths) - masks_found
-            logger.warning(f"{missing} mask files are missing and will be ignored")
+            self.mask_paths = np.array(custom_mask_paths, dtype=str)
+            
+            logger.info(f"Colmap mask setup: {masks_found}/{len(custom_mask_paths)} masks found")
+            
+            if masks_found == 0:
+                logger.warning("No mask files found! Training will proceed without masks.")
+            elif masks_found < len(custom_mask_paths):
+                missing = len(custom_mask_paths) - masks_found
+                logger.warning(f"{missing} mask files are missing and will be ignored")
 
     def load_intrinsics_and_extrinsics(self):
         """

@@ -238,6 +238,7 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
                 )
 
             elif intr.model == "OPENCV_FISHEYE":
+                logger.info(f"Loading OPENCV_FISHEYE camera {intr.id}: {intr.width}x{intr.height}, params={intr.params}")  # 加这行
                 params = copy.deepcopy(intr.params)
                 params[:4] = params[:4] / scaling_factor
                 self.intrinsics[intr.id] = create_fisheye_camera(params, width, height)

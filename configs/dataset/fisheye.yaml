@@ -17,4 +17,4 @@ mask_config:
   file_extensions: [".jpg.png", ".png", ".jpg"]  # 注意双扩展名在前
   fallback_to_standard: false
 
-max_points: 50000
+max_points: 5000000

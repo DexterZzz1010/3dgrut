@@ -25,7 +25,7 @@ from plyfile import PlyData, PlyElement
 
 import threedgrut.model.background as background
 from threedgrut.datasets.protocols import Batch
-from threedgrut.datasets.utils import read_next_bytes, read_colmap_points3D_text
+from threedgrut.datasets.utils import read_next_bytes, read_colmap_points3D_text,read_colmap_points3D_text_with_sampling
 from threedgrut.export.base import ExportableModel
 from threedgrut.export.ingp_exporter import INGPExporter
 from threedgrut.export.ply_exporter import PLYExporter
@@ -213,9 +213,12 @@ class MixtureOfGaussians(torch.nn.Module, ExportableModel):
             file_rgb = torch.tensor(rgb, dtype=torch.uint8, device=self.device)
         elif self.conf.dataset.type == "fisheye":
             points_file = os.path.join(root_path, "colmap", "points3D.txt")
-            pts, rgb, _ = read_colmap_points3D_text(points_file)
+            max_points = getattr(self.conf.dataset, 'max_points', None)
+            pts, rgb, _ = read_colmap_points3D_text_with_sampling(points_file, max_points)
             file_pts = torch.tensor(pts, dtype=torch.float32, device=self.device)
             file_rgb = torch.tensor(rgb, dtype=torch.uint8, device=self.device)
+            logger.info(f"点云最远点采样: 限制到 {max_points} 个点")
+            logger.info(f"实际点数: {len(file_pts)}")
         else:
             points_file = os.path.join(root_path, "sparse/0", "points3D.bin")
             # also handle nonbinary points files

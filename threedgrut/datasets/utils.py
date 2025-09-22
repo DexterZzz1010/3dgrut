@@ -19,7 +19,7 @@ import math
 import struct
 import collections
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Sequence,Tuple, Optional
 
 import numpy as np
 import torch
@@ -331,6 +331,77 @@ def read_colmap_points3D_binary(path_to_model_file):
         np.array(rgbs, dtype=np.int32),
         np.array(errors, dtype=np.float64).reshape(-1, 1),
     )
+
+
+def farthest_point_sampling(positions: np.ndarray, num_samples: int) -> np.ndarray:
+    """
+    最远点采样算法 - 保持点云空间分布
+    
+    Args:
+        positions: 点云坐标 (N, 3)
+        num_samples: 目标采样数量
+        
+    Returns:
+        选中点的索引数组 (num_samples,)
+    """
+    n_points = len(positions)
+    if num_samples >= n_points:
+        return np.arange(n_points)
+    
+    # 从第一个点开始（简单有效）
+    selected = [0]
+    distances = np.full(n_points, np.inf)
+    
+    for _ in range(num_samples - 1):
+        # 计算到最新点的距离
+        last_point = positions[selected[-1]]
+        new_distances = np.sum((positions - last_point) ** 2, axis=1)
+        
+        # 更新最小距离并选择最远点
+        distances = np.minimum(distances, new_distances)
+        next_idx = np.argmax(distances)
+        selected.append(next_idx)
+    
+    return np.array(selected)
+
+def sample_points3d_data(
+    positions: np.ndarray, 
+    colors: np.ndarray, 
+    errors: np.ndarray,
+    max_points: Optional[int] = None
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    对points3D数据进行最远点采样
+    
+    Args:
+        positions: 点云坐标 (N, 3)
+        colors: 点云颜色 (N, 3) 
+        errors: 重投影误差 (N, 1)
+        max_points: 最大点数，None表示不采样
+        
+    Returns:
+        采样后的 (positions, colors, errors)
+    """
+    if not max_points or max_points >= len(positions):
+        return positions, colors, errors
+    
+    # 使用最远点采样 - 简单有效
+    indices = farthest_point_sampling(positions, max_points)
+    return positions[indices], colors[indices], errors[indices]
+
+def read_colmap_points3D_text_with_sampling(path: str, max_points: Optional[int] = None):
+    """
+    读取points3D.txt文件并可选择性采样
+    """
+    positions, colors, errors = read_colmap_points3D_text(path)
+    return sample_points3d_data(positions, colors, errors, max_points)
+
+def read_colmap_points3D_binary_with_sampling(path: str, max_points: Optional[int] = None):
+    """
+    读取points3D.bin文件并可选择性采样  
+    """
+    positions, colors, errors = read_colmap_points3D_binary(path)
+    return sample_points3d_data(positions, colors, errors, max_points)
 
 
 def read_colmap_intrinsics_text(path):

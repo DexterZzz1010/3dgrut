@@ -791,3 +791,26 @@ def kannala_unproject_pixels_to_rays(pixel_coords: torch.Tensor,
     
 
 
+def slerp_pose(qvec0, tvec0, qvec1, tvec1, alpha):
+    """您的slerp_pose实现 - 完全不变"""
+    tvec = tvec0 + alpha * (tvec1 - tvec0)
+    
+    d = np.dot(qvec0, qvec1)
+    d = max(min(d, 1.0), -1.0)
+    theta = np.arccos(d)
+    
+    if abs(theta) > 1e-8:
+        qvec = qvec0 * (np.sin((1 - alpha) * theta)) / (np.sin(theta) + 1e-8) + qvec1 * np.sin(alpha * theta) / (np.sin(theta) + 1e-8)
+    else:
+        qvec = qvec0
+    qvec /= np.linalg.norm(qvec)
+            
+    return qvec, tvec
+
+
+def compute_rolling_shutter_alpha(pixel_y, height, upside_down=False):
+    """计算alpha值 - 对应您的逻辑"""
+    alpha = pixel_y / (height - 1) if height > 1 else 0.0
+    if upside_down:
+        alpha = 1.0 - alpha
+    return alpha

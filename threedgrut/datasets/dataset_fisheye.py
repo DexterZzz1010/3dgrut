@@ -145,8 +145,6 @@ class FisheyeDataset(ScannetppDataset):
         cam_extrinsics = read_colmap_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_colmap_intrinsics_text(cameras_intrinsic_file)
 
-        for intr in cam_intrinsics.values():
-            intr.params[4:] = 0.0
 
         if self.image_name_filter.get('enabled', False):
             original_count = len(cam_extrinsics)
@@ -194,4 +192,4 @@ class FisheyeDataset(ScannetppDataset):
         """
         返回图像文件夹名称。
         """
-        return "image_undistorted_fisheye"
+        return "colmap/images_rectified"

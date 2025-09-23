@@ -8,10 +8,10 @@ path: ???
 experiment_name: ""
 resume: ""
 out_dir: "./runs"
-n_iterations: 30000
+n_iterations: 60000
 with_gui: false
 gui_update_from_device: true
-val_frequency: 5000
+val_frequency: 10000
 num_workers: 24
 use_wandb: false
 wandb_project: "3dgrt"
@@ -76,7 +76,7 @@ model:
   print_stats: true
 
 checkpoint:
-  iterations: ${int_list:[ 7000, 30000 ]}
+  iterations: ${int_list:[ 30000, 60000 ]}
 
 optimizer:
   type: adam # We only support adam and selective_adam for now
@@ -103,7 +103,7 @@ scheduler:
     lr_init: ${optimizer.params.positions.lr}
     lr_final: 0.0000016
 
-    max_steps: 30000
+    max_steps: 150000
 
   density:
     type: skip

@@ -212,7 +212,7 @@ class MixtureOfGaussians(torch.nn.Module, ExportableModel):
             file_pts = torch.tensor(pts, dtype=torch.float32, device=self.device)
             file_rgb = torch.tensor(rgb, dtype=torch.uint8, device=self.device)
         elif self.conf.dataset.type == "fisheye":
-            points_file = os.path.join(root_path, "colmap", "points3D_1M.txt")
+            points_file = os.path.join(root_path, "colmap", "points3D.txt")
             # max_points = getattr(self.conf.dataset, 'max_points', None)
             # pts, rgb, _ = read_colmap_points3D_text_with_sampling(points_file, max_points)
             pts, rgb, _ = read_colmap_points3D_text(points_file)

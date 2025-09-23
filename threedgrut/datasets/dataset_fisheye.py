@@ -38,22 +38,18 @@ class FisheyeDataset(ScannetppDataset):
         test_split_interval=8,
         ray_jitter=None,
         image_name_filter=None,
-        mask_config=None,  # 新增mask配置参数
+        mask_config=None,  
     ):
         self.image_name_filter = image_name_filter or {}
         self.mask_config = mask_config or {}
         
-        # 调用父类构造函数
+
         super(FisheyeDataset, self).__init__(
             path, device, split, downsample_factor, test_split_interval, ray_jitter
         )
 
     def _should_include_image(self, image_name: str) -> bool:
-        """
-        判断是否应该包含指定的图像文件。
-        
-        完全由配置文件中的 image_name_filter 控制，不包含任何硬编码规则。
-        """
+
         if not self.image_name_filter.get('enabled', False):
             return True
             
@@ -137,16 +133,10 @@ class FisheyeDataset(ScannetppDataset):
                 logger.warning(f"{missing} mask files are missing and will be ignored")
 
     def load_intrinsics_and_extrinsics(self):
-        """
-        加载内参和外参，并应用配置文件中定义的图像过滤规则。
-        """
         cameras_extrinsic_file = os.path.join(self.path, "colmap", "images.txt")
         cameras_intrinsic_file = os.path.join(self.path, "colmap", "cameras.txt")
         cam_extrinsics = read_colmap_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_colmap_intrinsics_text(cameras_intrinsic_file)
-
-        for intr in cam_intrinsics.values():
-            intr.params[4:] = 0.0
 
         if self.image_name_filter.get('enabled', False):
             original_count = len(cam_extrinsics)
@@ -192,6 +182,6 @@ class FisheyeDataset(ScannetppDataset):
 
     def get_images_folder(self):
         """
-        返回图像文件夹名称。
+        colmap/images_rectified for fisheye dataset
         """
-        return "image_undistorted_fisheye"
+        return "colmap/images_rectified"

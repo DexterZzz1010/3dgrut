@@ -702,3 +702,115 @@ def get_worker_id():
             return "main_process"
     except:
         return f"thread_{threading.get_ident()}"
+
+
+def zero_safe_divide(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """Divide `a` by `b` placing zeros where `b` is zero."""
+    return torch.where(b != 0, a / b, torch.zeros_like(a))
+
+def kannala_unproject_pixels_to_rays(pixel_coords: torch.Tensor, 
+                                    focal_length: np.ndarray,
+                                    principal_point: np.ndarray, 
+                                    radial_coeffs: np.ndarray,
+                                    iterations: int = 4) -> torch.Tensor:
+    """Unproject pixel -> 3D coordinates under the Kannala camera model.
+
+    Instead of using
+        the undistortion polynomial, it solves kannala_project(X) = pixel_position for X,
+        using Newton-Raphson.
+
+    Note: It would be better to use scipy or some other such package to call a solver, but alas,
+        we need both batching and GPU support.
+
+    Parameters
+    ----------
+    p: tensor of shape `(..., 2)`
+        Pixel coordinates
+    K: tensor of shape `(..., 3, 3)`
+        Camera matrix
+    dist: tensor of shape `(..., 4)`
+        Distortion coefficients
+
+    Returns
+    -------
+    P: tensor of shape `(..., 3)`
+        Unprojected 3D coordinates on a unit sphere around origin in the camera coordinate
+        system.
+    """
+    
+    focal_tensor = torch.from_numpy(focal_length.astype(np.float32))
+    principal_tensor = torch.from_numpy(principal_point.astype(np.float32))
+    dist = torch.from_numpy(radial_coeffs.astype(np.float32))
+     
+    K = torch.zeros(3, 3, dtype=torch.float32)
+    K[0, 0] = focal_tensor[0]  # fx
+    K[1, 1] = focal_tensor[1]  # fy  
+    K[0, 2] = principal_tensor[0]  # cx
+    K[1, 2] = principal_tensor[1]  # cy
+    K[2, 2] = 1.0
+    
+    Kinv = torch.inverse(K)
+    
+    ones_column = torch.ones_like(pixel_coords[..., 0:1])
+    p_hom = torch.cat([pixel_coords, ones_column], dim=-1)
+    
+    # matvec
+    xy_distorted = torch.stack([
+        torch.sum(Kinv[0, :] * p_hom, dim=-1),
+        torch.sum(Kinv[1, :] * p_hom, dim=-1)
+    ], dim=-1)
+    
+    rho = torch.norm(xy_distorted, dim=-1)
+    
+    # Newton-Raphson 
+    theta = rho.clone()
+    
+    for _ in range(iterations):
+        a = dist[0] * theta**2
+        b = dist[1] * theta**4  
+        c = dist[2] * theta**6
+        d = dist[3] * theta**8
+        
+        residual = theta * (1 + a + b + c + d) - rho
+        derivative = 1 + 3*a + 5*b + 7*c + 9*d
+        
+        theta = theta - zero_safe_divide(residual, derivative)
+    
+    phi = torch.atan2(xy_distorted[..., 1], xy_distorted[..., 0])
+    
+    sin_theta = torch.sin(theta)
+    cos_theta = torch.cos(theta)
+    cos_phi = torch.cos(phi)  
+    sin_phi = torch.sin(phi)
+    
+    return torch.stack([
+        sin_theta * cos_phi,
+        sin_theta * sin_phi,
+        cos_theta
+    ], dim=-1)
+    
+
+
+def slerp_pose(qvec0, tvec0, qvec1, tvec1, alpha):
+    """您的slerp_pose实现 - 完全不变"""
+    tvec = tvec0 + alpha * (tvec1 - tvec0)
+    
+    d = np.dot(qvec0, qvec1)
+    d = max(min(d, 1.0), -1.0)
+    theta = np.arccos(d)
+    
+    if abs(theta) > 1e-8:
+        qvec = qvec0 * (np.sin((1 - alpha) * theta)) / (np.sin(theta) + 1e-8) + qvec1 * np.sin(alpha * theta) / (np.sin(theta) + 1e-8)
+    else:
+        qvec = qvec0
+    qvec /= np.linalg.norm(qvec)
+            
+    return qvec, tvec
+
+
+def compute_rolling_shutter_alpha(pixel_y, height, upside_down=False):
+    """计算alpha值 - 对应您的逻辑"""
+    alpha = pixel_y / (height - 1) if height > 1 else 0.0
+    if upside_down:
+        alpha = 1.0 - alpha
+    return alpha

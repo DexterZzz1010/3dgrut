@@ -17,7 +17,7 @@ from .dataset_nerf import NeRFDataset
 from .dataset_colmap import ColmapDataset
 from .dataset_scannetpp import ScannetppDataset
 from .dataset_fisheye import FisheyeDataset  # 新增导入
-
+from .dataset_rolling_shutter import RollingShutterFisheyeDataset  # 新增导入
 
 def make(name: str, config, ray_jitter):
     match name:
@@ -78,6 +78,24 @@ def make(name: str, config, ray_jitter):
                 test_split_interval=config.dataset.test_split_interval,
                 image_name_filter=getattr(config.dataset, 'image_name_filter', None),
                 mask_config=getattr(config.dataset, 'mask_config', None),  # 新增
+            )  
+        case "rolling_shutter_fisheye":  # 新增，遵循相同pattern
+            train_dataset = RollingShutterFisheyeDataset(
+                config.path,
+                split="train",
+                ray_jitter=ray_jitter,
+                downsample_factor=config.dataset.downsample_factor,
+                test_split_interval=config.dataset.test_split_interval,
+                image_name_filter=getattr(config.dataset, 'image_name_filter', None),
+                mask_config=getattr(config.dataset, 'mask_config', None),
+            )
+            val_dataset = RollingShutterFisheyeDataset(
+                config.path,
+                split="val",
+                downsample_factor=config.dataset.downsample_factor,
+                test_split_interval=config.dataset.test_split_interval,
+                image_name_filter=getattr(config.dataset, 'image_name_filter', None),
+                mask_config=getattr(config.dataset, 'mask_config', None),
             )
         case _:
             raise ValueError(
@@ -117,6 +135,15 @@ def make_test(name: str, config):
                 test_split_interval=config.dataset.test_split_interval,
                 image_name_filter=getattr(config.dataset, 'image_name_filter', None),
                 mask_config=getattr(config.dataset, 'mask_config', None),  # 新增
+            )
+        case "rolling_shutter_fisheye": 
+            return RollingShutterFisheyeDataset(
+                config.path,
+                split="val",
+                downsample_factor=config.dataset.downsample_factor,
+                test_split_interval=config.dataset.test_split_interval,
+                image_name_filter=getattr(config.dataset, 'image_name_filter', None),
+                mask_config=getattr(config.dataset, 'mask_config', None),
             )
         case _:
             raise ValueError(

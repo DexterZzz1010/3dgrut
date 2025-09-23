@@ -13,8 +13,8 @@ image_name_filter:
 mask_config:
   enabled: false
   source_type: "colmap_structure"
-  base_path: "colmap/masks_rectified"  # 改为直接路径，不用../
-  file_extensions: [".jpg.png", ".png", ".jpg"]  # 注意双扩展名在前
+  base_path: "colmap/masks_rectified"
+  file_extensions: [".jpg.png", ".png", ".jpg"]
   fallback_to_standard: false
 
 max_points: 5000000

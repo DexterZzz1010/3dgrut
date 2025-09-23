@@ -37,15 +37,16 @@ from .utils import (
     read_colmap_intrinsics_binary,
     read_colmap_intrinsics_text,
     get_worker_id,
+    kannala_unproject_pixels_to_rays, 
+    compute_max_radius,
 )
 from .camera_models import (
     ShutterType,
     OpenCVPinholeCameraModelParameters,
     OpenCVFisheyeCameraModelParameters,
-    image_points_to_camera_rays,
+    # image_points_to_camera_rays,
     pixels_to_image_points,
 )
-
 
 class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
     def __init__(
@@ -154,24 +155,69 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
                 type(params).__name__,
             )
 
+        # def create_fisheye_camera(params, w, h):
+        #     # Generate UV coordinates
+        #     u = np.tile(np.arange(w), h)
+        #     v = np.arange(h).repeat(w)
+        #     out_shape = (1, h, w, 3)
+        #     resolution = np.array([w, h]).astype(np.int64)
+        #     principal_point = params[2:4].astype(np.float32)
+        #     focal_length = params[0:2].astype(np.float32)
+        #     radial_coeffs = params[4:].astype(np.float32)
+        #     # Estimate max angle for fisheye
+        #     max_radius_pixels = compute_max_radius(
+        #         resolution.astype(np.float64), principal_point
+        #     )
+        #     fov_angle_x = 2.0 * max_radius_pixels / focal_length[0]
+        #     fov_angle_y = 2.0 * max_radius_pixels / focal_length[1]
+        #     max_angle = np.max([fov_angle_x, fov_angle_y]) / 2.0
+
+        #     params = OpenCVFisheyeCameraModelParameters(
+        #         principal_point=principal_point,
+        #         focal_length=focal_length,
+        #         radial_coeffs=radial_coeffs,
+        #         resolution=resolution,
+        #         max_angle=max_angle,
+        #         shutter_type=ShutterType.GLOBAL,
+        #     )
+        #     pixel_coords = torch.tensor(np.stack([u, v], axis=1), dtype=torch.int32)
+        #     image_points = pixels_to_image_points(pixel_coords)
+        #     rays_d_cam = image_points_to_camera_rays(params, image_points)
+        #     rays_o_cam = torch.zeros_like(rays_d_cam)
+        #     return (
+        #         params.to_dict(),
+        #         rays_o_cam.to(torch.float32).reshape(out_shape),
+        #         rays_d_cam.to(torch.float32).reshape(out_shape),
+        #         type(params).__name__,
+        #     )
+
         def create_fisheye_camera(params, w, h):
-            # Generate UV coordinates
+            """kannala_unproject_newtonraphson"""
+            
+            if len(params) < 8:
+                raise ValueError("OPENCV_FISHEYE requires at least 8 parameters")
+                
+            focal_length = np.asarray(params[0:2], dtype=np.float32)
+            principal_point = np.asarray(params[2:4], dtype=np.float32)
+            radial_coeffs = np.asarray(params[4:8], dtype=np.float32)
+            resolution = np.array([w, h], dtype=np.int64)
+            
             u = np.tile(np.arange(w), h)
             v = np.arange(h).repeat(w)
-            out_shape = (1, h, w, 3)
-            resolution = np.array([w, h]).astype(np.int64)
-            principal_point = params[2:4].astype(np.float32)
-            focal_length = params[0:2].astype(np.float32)
-            radial_coeffs = params[4:].astype(np.float32)
-            # Estimate max angle for fisheye
-            max_radius_pixels = compute_max_radius(
-                resolution.astype(np.float64), principal_point
-            )
+            pixel_coords = torch.tensor(np.stack([u, v], axis=1), dtype=torch.float32)+0.5
+            
+            max_radius_pixels = compute_max_radius(resolution.astype(np.float64), principal_point)
             fov_angle_x = 2.0 * max_radius_pixels / focal_length[0]
             fov_angle_y = 2.0 * max_radius_pixels / focal_length[1]
             max_angle = np.max([fov_angle_x, fov_angle_y]) / 2.0
-
-            params = OpenCVFisheyeCameraModelParameters(
+            
+            # pixel_coords = pixels_to_image_points(pixel_coords)
+            rays_direction = kannala_unproject_pixels_to_rays(
+                pixel_coords, focal_length, principal_point, radial_coeffs, iterations=4
+            )
+            rays_origin = torch.zeros_like(rays_direction)
+            
+            params_obj = OpenCVFisheyeCameraModelParameters(
                 principal_point=principal_point,
                 focal_length=focal_length,
                 radial_coeffs=radial_coeffs,
@@ -179,15 +225,14 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
                 max_angle=max_angle,
                 shutter_type=ShutterType.GLOBAL,
             )
-            pixel_coords = torch.tensor(np.stack([u, v], axis=1), dtype=torch.int32)
-            image_points = pixels_to_image_points(pixel_coords)
-            rays_d_cam = image_points_to_camera_rays(params, image_points)
-            rays_o_cam = torch.zeros_like(rays_d_cam)
+            
+            out_shape = (1, h, w, 3)
+            
             return (
-                params.to_dict(),
-                rays_o_cam.to(torch.float32).reshape(out_shape),
-                rays_d_cam.to(torch.float32).reshape(out_shape),
-                type(params).__name__,
+                params_obj.to_dict(),
+                rays_origin.to(torch.float32).reshape(out_shape),
+                rays_direction.to(torch.float32).reshape(out_shape),
+                type(params_obj).__name__,
             )
 
         cam_id_to_image_name = {

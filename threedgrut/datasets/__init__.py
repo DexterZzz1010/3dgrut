@@ -79,7 +79,7 @@ def make(name: str, config, ray_jitter):
                 image_name_filter=getattr(config.dataset, 'image_name_filter', None),
                 mask_config=getattr(config.dataset, 'mask_config', None),  # 新增
             )  
-        case "rolling_shutter_fisheye":  # 新增，遵循相同pattern
+        case "rolling_shutter_fisheye":  
             train_dataset = RollingShutterFisheyeDataset(
                 config.path,
                 split="train",

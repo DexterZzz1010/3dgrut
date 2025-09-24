@@ -218,7 +218,7 @@ class MixtureOfGaussians(torch.nn.Module, ExportableModel):
             file_rgb = torch.tensor(rgb, dtype=torch.uint8, device=self.device)
 
         elif self.conf.dataset.type == "rolling_shutter_fisheye":
-            points_file = os.path.join(root_path, "colmap", "points3D.txt")
+            points_file = os.path.join(root_path, "colmap", "points3D_10M.txt")
             pts, rgb, _ = read_colmap_points3D_text(points_file)
             file_pts = torch.tensor(pts, dtype=torch.float32, device=self.device)
             file_rgb = torch.tensor(rgb, dtype=torch.uint8, device=self.device)

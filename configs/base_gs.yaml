@@ -71,7 +71,7 @@ model:
 
   background:
     name: background-color # one of [skip-background, background-color]
-    color: black # one of [black, white, random] needs to be defined if name == background-color
+    color: white # one of [black, white, random] needs to be defined if name == background-color
 
   print_stats: true
 

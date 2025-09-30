@@ -1,6 +1,6 @@
 type: rolling_shutter_fisheye
 downsample_factor: 2
-test_split_interval: 8
+test_split_interval: 10
 # 图像过滤配置 - 只保留FC文件夹下的图像
 image_name_filter:
   enabled: true
@@ -11,7 +11,7 @@ image_name_filter:
 
 # Mask配置
 mask_config:
-  enabled: false
+  enabled: true
   source_type: "colmap_structure"
   base_path: "colmap/masks_rectified"
   file_extensions: [".jpg.png", ".png", ".jpg"]

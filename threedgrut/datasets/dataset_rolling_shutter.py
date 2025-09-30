@@ -18,28 +18,27 @@ class RollingShutterFisheyeDataset(FisheyeDataset):
         if self._rolling_shutter_poses:
             logger.info(f"🎉 Rolling shutter enabled: {len(self._rolling_shutter_poses)} poses")
             # self._print_rolling_shutter_summary()
-            # 重新构建内参以包含rolling shutter类型
             self._rebuild_intrinsics_with_rolling_shutter()
         else:
             logger.info("ℹ️  Rolling shutter disabled - no pose data found")
 
     def _rebuild_intrinsics_with_rolling_shutter(self):
-        """重新构建内参，将shutter_type设置为ROLLING_TOP_TO_BOTTOM"""
+        """rebuild intrinsics to set rolling shutter type"""
         new_intrinsics = {}
         
         for camera_id, (params_dict, rays_ori, rays_dir, camera_name) in self.intrinsics.items():
-            # 复制现有参数并修改shutter_type
+            # copy
             new_params_dict = params_dict.copy()
             new_params_dict["shutter_type"] = ShutterType.ROLLING_TOP_TO_BOTTOM
             
             new_intrinsics[camera_id] = (new_params_dict, rays_ori, rays_dir, camera_name)
             
-        # 替换原有内参
+        # replace
         self.intrinsics = new_intrinsics
         logger.info("📝 Updated camera intrinsics with ROLLING_TOP_TO_BOTTOM shutter type")
 
     def _print_rolling_shutter_summary(self):
-        """打印rolling shutter数据摘要"""
+        """print summary statistics of rolling shutter poses"""
         if not self._rolling_shutter_poses:
             return
             
@@ -47,11 +46,9 @@ class RollingShutterFisheyeDataset(FisheyeDataset):
         rotation_diffs = []
         
         for qvec_start, tvec_start, qvec_end, tvec_end in self._rolling_shutter_poses.values():
-            # 平移差异
             t_diff = np.linalg.norm(tvec_end - tvec_start)
             translation_diffs.append(t_diff)
             
-            # 旋转差异 (四元数内积计算角度差)
             dot = abs(np.dot(qvec_start, qvec_end))
             dot = np.clip(dot, 0, 1)
             angle_diff = 2 * np.arccos(dot) * 180 / np.pi
@@ -86,13 +83,13 @@ class RollingShutterFisheyeDataset(FisheyeDataset):
         
         with open(rs_file, 'r') as f:
             lines = f.readlines()
-            # 从第7行开始读取 (索引6)
+            # from line 7 onwards are data
             for line in lines[6:]:  
                 line = line.strip()
                 if not line or line.startswith('#'):
                     continue                    
                 parts = line.split()
-                if len(parts) >= 17:  # 确保有足够字段
+                if len(parts) >= 17:  # garentee enough parts
                     try:
                         image_name = parts[16]
                         qvec_start = np.array([float(x) for x in parts[1:5]])
@@ -101,40 +98,38 @@ class RollingShutterFisheyeDataset(FisheyeDataset):
                         tvec_end = np.array([float(x) for x in parts[12:15]])
                         poses[image_name] = (qvec_start, tvec_start, qvec_end, tvec_end)
                     except (ValueError, IndexError) as e:
-                        logger.warning(f"跳过无效行: {line[:50]}... 错误: {e}")
+                        logger.warning(f"Jump lines: {line[:50]}... 错误: {e}")
                         continue
         
-        logger.info(f"📊 加载了 {len(poses)} 个rolling shutter poses")
+        logger.info(f"📊 Loaded {len(poses)} rolling shutter poses")
         return poses
 
     def get_gpu_batch_with_intrinsics(self, batch):
-        """重写父类方法，添加rolling shutter poses"""
+        """rolling shutter poses"""
         gpu_batch = super().get_gpu_batch_with_intrinsics(batch)
         
-        # 创建SensorPose3D命名元组
         SensorPose3D = namedtuple('SensorPose3D', ['T_world_sensors', 'timestamps_us'])
         
-        # 如果有rolling shutter数据，添加到batch中
         if (hasattr(self, 'current_image_name') and 
             self.current_image_name in self._rolling_shutter_poses):
             
             qvec_start, tvec_start, qvec_end, tvec_end = self._rolling_shutter_poses[self.current_image_name]
             
-            # 转换为系统期望的7D格式: [tx,ty,tz, qx,qy,qz,qw] 
-            # 注意: COLMAP使用[qw,qx,qy,qz]，系统期望[qx,qy,qz,qw]
+            #  [tx,ty,tz, qx,qy,qz,qw] 
+            # COLMAP[qw,qx,qy,qz]，expect[qx,qy,qz,qw]
             start_pose = np.concatenate([tvec_start, qvec_start[1:], [qvec_start[0]]])
             end_pose = np.concatenate([tvec_end, qvec_end[1:], [qvec_end[0]]])
             
-            # 添加sensor_poses到gpu_batch
+            # add to batch
             gpu_batch.sensor_poses = SensorPose3D(
                 T_world_sensors=[
                     torch.tensor(start_pose, dtype=torch.float32, device=self.device),
                     torch.tensor(end_pose, dtype=torch.float32, device=self.device)
                 ],
-                timestamps_us=[0, 1]  # 任意时间戳用于插值计算
+                timestamps_us=[0, 1]  # anything non-equal
             )
             
-            # 调试日志
+            # logging for first few images
             if not hasattr(self, '_rs_logged_count'):
                 self._rs_logged_count = 0
             if self._rs_logged_count < 3:
@@ -147,18 +142,18 @@ class RollingShutterFisheyeDataset(FisheyeDataset):
                 logger.info("   ... (rolling shutter continues for remaining images)")
                 self._rs_logged_count += 1
         else:
-            # Global shutter情况 - 从T_to_world提取pose并创建相同的start/end
+            # Global shutter
             T_world = gpu_batch.T_to_world.squeeze().cpu().numpy()  # [4,4] matrix
             
-            # 提取旋转矩阵和平移向量
-            R = T_world[:3, :3]  # 旋转矩阵
-            t = T_world[:3, 3]   # 平移向量
+
+            R = T_world[:3, :3]  
+            t = T_world[:3, 3]   
             
-            # 转换旋转矩阵为四元数 (简化版本)
+   
             
             quat = Rotation.from_matrix(R).as_quat()  # [x,y,z,w]
             
-            # 构建7D pose: [tx,ty,tz, qx,qy,qz,qw]
+            # 7D pose: [tx,ty,tz, qx,qy,qz,qw]
             pose_7d = np.concatenate([t, quat])
             pose_tensor = torch.tensor(pose_7d, dtype=torch.float32, device=self.device)
             
@@ -170,6 +165,5 @@ class RollingShutterFisheyeDataset(FisheyeDataset):
         return gpu_batch
 
     def __getitem__(self, idx):
-        """重写获取项目方法，设置当前图像名"""
         self.current_image_name = os.path.basename(self.image_paths[idx])
         return super().__getitem__(idx)

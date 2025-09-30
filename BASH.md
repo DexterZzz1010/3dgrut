@@ -14,4 +14,4 @@ sbatch --partition=ztestpreemp scripts/3dgrut_train.sh --config-name apps/scanne
 
 sbatch --partition=ztestpreemp scripts/3dgrut_train.sh --config-name apps/fisheye_3dgut.yaml --binary
 
-sbatch --partition=ztestpreemp scripts/3dgrut_train.sh --config-name apps/rolling_shutter_3dgut.yaml --binary
+sbatch --partition=zprod scripts/3dgrut_train.sh --config-name apps/rolling_shutter_3dgut.yaml --binary

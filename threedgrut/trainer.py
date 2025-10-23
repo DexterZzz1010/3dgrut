@@ -549,6 +549,57 @@ class Trainer3DGRUT:
             table[time_key] = f"{'{:.2f}'.format(mean_timings[time_key])}" + " ms/it"
         logger.log_table(f"📊 Validation Metrics - Step {global_step}", record=table)
 
+    @torch.no_grad()
+    def log_gaussian_statistics(self, global_step: int) -> None:
+        """Report basic statistics about the Gaussian parameters."""
+        if self.model.num_gaussians == 0:
+            return
+
+        writer = self.tracking.writer if getattr(self.conf, "enable_writer", False) and self.tracking.writer else None
+
+        positions = self.model.get_positions().detach()
+        pos_min = torch.amin(positions, dim=0)
+        pos_max = torch.amax(positions, dim=0)
+        pos_mean = torch.mean(positions, dim=0)
+
+        scale = self.model.get_scale().detach()
+        scale_min = torch.amin(scale, dim=0)
+        scale_max = torch.amax(scale, dim=0)
+
+        density = self.model.get_density().detach().view(-1)
+        density_min = torch.amin(density)
+        density_max = torch.amax(density)
+
+        pos_min_vals = pos_min.cpu().tolist()
+        pos_max_vals = pos_max.cpu().tolist()
+        pos_mean_vals = pos_mean.cpu().tolist()
+        scale_min_vals = scale_min.cpu().tolist()
+        scale_max_vals = scale_max.cpu().tolist()
+        density_min_val = float(density_min.cpu())
+        density_max_val = float(density_max.cpu())
+
+        def fmt_triplet(values: list[float]) -> str:
+            return f"[{values[0]:.3f}, {values[1]:.3f}, {values[2]:.3f}]"
+
+        message = (
+            f"Step {global_step}: Gaussian means min{fmt_triplet(pos_min_vals)} "
+            f"max{fmt_triplet(pos_max_vals)} mean{fmt_triplet(pos_mean_vals)} | "
+            f"scale min{fmt_triplet(scale_min_vals)} max{fmt_triplet(scale_max_vals)} | "
+            f"density range [{density_min_val:.4f}, {density_max_val:.4f}]"
+        )
+        logger.info(message)
+
+        if writer is not None:
+            axes = ("x", "y", "z")
+            for idx, axis in enumerate(axes):
+                writer.add_scalar(f"gaussians/means/{axis}_min", pos_min_vals[idx], global_step)
+                writer.add_scalar(f"gaussians/means/{axis}_max", pos_max_vals[idx], global_step)
+                writer.add_scalar(f"gaussians/means/{axis}_mean", pos_mean_vals[idx], global_step)
+                writer.add_scalar(f"gaussians/scale/{axis}_min", scale_min_vals[idx], global_step)
+                writer.add_scalar(f"gaussians/scale/{axis}_max", scale_max_vals[idx], global_step)
+            writer.add_scalar("gaussians/density/min", density_min_val, global_step)
+            writer.add_scalar("gaussians/density/max", density_max_val, global_step)
+
     @torch.cuda.nvtx.range(f"log_training_iter")
     def log_training_iter(
         self,
@@ -612,6 +663,10 @@ class Trainer3DGRUT:
             # # NOTE: hack to easily compare with 3DGS
             # writer.add_scalar("train_loss_patches/total_loss", loss, global_step)
             # writer.add_scalar("gaussians/count", self.model.num_gaussians, self.global_step)
+
+        log_every = max(1, getattr(self.conf, "log_frequency", 1))
+        if global_step % log_every == 0:
+            self.log_gaussian_statistics(global_step)
 
         logger.log_progress(
             task_name="Training",
